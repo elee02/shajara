@@ -22,6 +22,7 @@ interface ListViewProps {
   people: (Person & { can_edit?: boolean; created_by_name?: string })[];
   currentUser: User | null;
   focusPerson?: Person | null;
+  enableKinship?: boolean;
   onFocusPersonChange?: (personId: number) => void;
   onSelectPerson: (person: Person) => void;
   onEditPerson: (person: Person) => void;
@@ -33,6 +34,7 @@ export const ListView: React.FC<ListViewProps> = ({
   people,
   currentUser,
   focusPerson = null,
+  enableKinship = true,
   onFocusPersonChange,
   onSelectPerson,
   onEditPerson,

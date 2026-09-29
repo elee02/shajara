@@ -176,7 +176,8 @@ export default function Home() {
     }
   };
 
-  // Global focus person state
+  // Global focus person & kinship naming state
+  const [enableKinship, setEnableKinship] = useState<boolean>(true);
   const [focusPersonId, setFocusPersonId] = useState<number | null>(null);
 
   useEffect(() => {
@@ -357,6 +358,8 @@ export default function Home() {
           currentUser={currentUser}
           focusPersonId={focusPersonId}
           onFocusPersonChange={setFocusPersonId}
+          enableKinship={enableKinship}
+          onToggleKinship={() => setEnableKinship(!enableKinship)}
           onSelectPerson={(p) => setSelectedPerson(p)}
           onAddRelated={(parentId, rel) => handleOpenAddModal(parentId, rel)}
           onEditPerson={handleEditPerson}
@@ -366,6 +369,7 @@ export default function Home() {
           people={people}
           currentUser={currentUser}
           focusPerson={focusPerson}
+          enableKinship={enableKinship}
           onFocusPersonChange={setFocusPersonId}
           onSelectPerson={(p) => setSelectedPerson(p)}
           onEditPerson={handleEditPerson}
@@ -380,6 +384,7 @@ export default function Home() {
         currentUser={currentUser}
         allPeople={people}
         focusPerson={focusPerson}
+        enableKinship={enableKinship}
         onSetFocus={(id) => setFocusPersonId(id)}
         onClose={() => setSelectedPerson(null)}
         onEdit={handleEditPerson}

@@ -25,6 +25,7 @@ interface PersonModalProps {
   currentUser: User | null;
   allPeople: Person[];
   focusPerson?: Person | null;
+  enableKinship?: boolean;
   onSetFocus?: (personId: number) => void;
   onClose: () => void;
   onEdit: (person: Person) => void;
@@ -38,6 +39,7 @@ export const PersonModal: React.FC<PersonModalProps> = ({
   currentUser,
   allPeople,
   focusPerson = null,
+  enableKinship = true,
   onSetFocus,
   onClose,
   onEdit,

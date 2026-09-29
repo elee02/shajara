@@ -26,6 +26,8 @@ interface TreeViewProps {
   currentUser: User | null;
   focusPersonId?: number | null;
   onFocusPersonChange?: (id: number) => void;
+  enableKinship?: boolean;
+  onToggleKinship?: () => void;
   onSelectPerson: (person: Person) => void;
   onAddRelated: (parentId: number, relationType: "child" | "father") => void;
   onEditPerson: (person: Person) => void;
@@ -52,6 +54,8 @@ export const TreeView: React.FC<TreeViewProps> = ({
   currentUser,
   focusPersonId: propFocusId,
   onFocusPersonChange,
+  enableKinship: propEnableKinship,
+  onToggleKinship,
   onSelectPerson,
   onAddRelated,
   onEditPerson,
@@ -63,7 +67,13 @@ export const TreeView: React.FC<TreeViewProps> = ({
   const [activeSide, setActiveSide] = useState<"all" | BranchSide>("all");
 
   // Relative-to-me controls
-  const [enableKinship, setEnableKinship] = useState<boolean>(true);
+  const [internalEnableKinship, setInternalEnableKinship] = useState<boolean>(true);
+  const enableKinship = propEnableKinship !== undefined ? propEnableKinship : internalEnableKinship;
+  const toggleKinship = () => {
+    if (onToggleKinship) onToggleKinship();
+    else setInternalEnableKinship(!internalEnableKinship);
+  };
+
   const [internalFocusId, setInternalFocusId] = useState<number | null>(null);
 
   const focusPersonId = propFocusId !== undefined && propFocusId !== null ? propFocusId : internalFocusId;
@@ -443,7 +453,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
           }}
         >
           <button
-            onClick={() => setEnableKinship(!enableKinship)}
+            onClick={toggleKinship}
             className="btn btn-sm"
             style={{
               background: enableKinship ? "var(--gold-gradient)" : "var(--bg-tertiary)",
@@ -873,12 +883,10 @@ export const TreeView: React.FC<TreeViewProps> = ({
     const isOwner = currentUser?.id === person.created_by || currentUser?.role === "admin";
     const isMale = person.gender === "male";
     const portrait = person.photo_url || (person.photos && person.photos[0]) || null;
-    const isCurrentFocus = focusPersonId === person.id;
 
-    // Dynamic kinship title relative to focus person
-    const kinshipLabel = enableKinship
-      ? getKinshipTitle(person, focusPerson, people)
-      : (person.relationship_title || `${person.generation_level}-bo'g'in`);
+    // Dynamic kinship title relative to focus person (only when enableKinship is true)
+    const isCurrentFocus = enableKinship && focusPersonId === person.id;
+    const kinshipLabel = enableKinship ? getKinshipTitle(person, focusPerson, people) : null;
 
     // Dynamic branch side relative to focus person
     const dynSide = dynamicSideMap.get(person.id) || "direct";
@@ -965,24 +973,42 @@ export const TreeView: React.FC<TreeViewProps> = ({
             </div>
 
             {/* Kinship or Generation Title */}
-            <div
-              style={{
-                fontSize: "11px",
-                fontWeight: 800,
-                color: isCurrentFocus ? "#000" : "var(--text-gold)",
-                display: "inline-block",
-                background: isCurrentFocus ? "var(--gold-gradient)" : "rgba(212, 175, 55, 0.15)",
-                padding: "2px 7px",
-                borderRadius: "4px",
-                marginBottom: "3px",
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                maxWidth: "100%",
-              }}
-            >
-              {isCurrentFocus ? "🎯 O'ZINGIZ" : `⭐ ${kinshipLabel}`}
-            </div>
+            {enableKinship ? (
+              <div
+                style={{
+                  fontSize: "11px",
+                  fontWeight: 800,
+                  color: isCurrentFocus ? "#000" : "var(--text-gold)",
+                  display: "inline-block",
+                  background: isCurrentFocus ? "var(--gold-gradient)" : "rgba(212, 175, 55, 0.15)",
+                  padding: "2px 7px",
+                  borderRadius: "4px",
+                  marginBottom: "3px",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  maxWidth: "100%",
+                }}
+              >
+                {isCurrentFocus ? "🎯 O'ZINGIZ" : `⭐ ${kinshipLabel}`}
+              </div>
+            ) : (
+              <div
+                style={{
+                  fontSize: "10px",
+                  fontWeight: 600,
+                  color: "var(--text-secondary)",
+                  display: "inline-block",
+                  background: "var(--bg-tertiary)",
+                  padding: "2px 6px",
+                  borderRadius: "4px",
+                  marginBottom: "3px",
+                  border: "1px solid var(--border-subtle)",
+                }}
+              >
+                🏷️ {person.generation_level}-bo&apos;g&apos;in
+              </div>
+            )}
 
             <h3
               style={{
@@ -1058,7 +1084,9 @@ export const TreeView: React.FC<TreeViewProps> = ({
             onClick={(e) => {
               e.stopPropagation();
               setFocusPersonId(person.id);
-              setEnableKinship(true);
+              if (!enableKinship) {
+                toggleKinship();
+              }
             }}
             className="btn btn-sm"
             style={{
