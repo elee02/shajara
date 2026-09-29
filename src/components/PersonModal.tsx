@@ -1,7 +1,7 @@
 "use client";
 
-import React from "react";
-import { Person, UZBEK_GENERATIONS, User } from "@/lib/types";
+import React, { useState } from "react";
+import { Person, User, UZBEK_GENERATION_LABELS } from "@/lib/types";
 import { 
   X, 
   MapPin, 
@@ -13,7 +13,9 @@ import {
   Lock, 
   Plus,
   GitCommit,
-  ShieldCheck
+  ShieldCheck,
+  Phone,
+  HeartHandshake
 } from "lucide-react";
 
 interface PersonModalProps {
@@ -37,49 +39,144 @@ export const PersonModal: React.FC<PersonModalProps> = ({
   onSelectRelative,
   onAddChild,
 }) => {
+  const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
+
   if (!person) return null;
 
   const isOwner = currentUser?.id === person.created_by || currentUser?.role === "admin";
-  const genInfo = UZBEK_GENERATIONS[person.generation_level];
+  const genInfo = UZBEK_GENERATION_LABELS[person.generation_level] || { title_uz: `${person.generation_level}-bo'g'in`, desc: "" };
 
-  // Relatives
   const father = person.father_id ? allPeople.find((p) => p.id === person.father_id) : null;
   const mother = person.mother_id ? allPeople.find((p) => p.id === person.mother_id) : null;
+  const spouse = person.spouse_id ? allPeople.find((p) => p.id === person.spouse_id) : null;
   const children = allPeople.filter((p) => p.father_id === person.id || p.mother_id === person.id);
+
+  const mainPhoto = selectedPhoto || person.photo_url || (person.photos && person.photos[0]) || null;
+  const photosList = person.photos || (person.photo_url ? [person.photo_url] : []);
+
+  const branchSideLabels: Record<string, { label: string; color: string; bg: string }> = {
+    father: { label: "Ota tomoni (Paternal)", color: "#38bdf8", bg: "rgba(56, 189, 248, 0.15)" },
+    mother: { label: "Ona tomoni (Maternal)", color: "#f472b6", bg: "rgba(244, 114, 182, 0.15)" },
+    direct: { label: "O'z oilasi & Avlodlar", color: "#34d399", bg: "rgba(52, 211, 153, 0.15)" },
+    in_laws: { label: "Qudachilik", color: "#c084fc", bg: "rgba(192, 132, 252, 0.15)" },
+  };
+
+  const sideBadge = branchSideLabels[person.branch_side] || branchSideLabels.direct;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div
         className="modal-content"
         onClick={(e) => e.stopPropagation()}
-        style={{ maxWidth: "600px" }}
+        style={{ maxWidth: "660px" }}
       >
-        {/* Header */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
-              <span className={`gen-badge gen-badge-${person.generation_level}`}>
-                {person.generation_level}-bo&apos;g&apos;in
-              </span>
-              <span style={{ fontSize: "13px", fontWeight: 700, color: "var(--text-gold)" }}>
-                {genInfo?.title_uz}
-              </span>
+        {/* Header & Portrait */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "18px" }}>
+          <div style={{ display: "flex", gap: "16px", alignItems: "center" }}>
+            {/* Portrait Frame */}
+            <div
+              style={{
+                width: "84px",
+                height: "84px",
+                borderRadius: "50%",
+                overflow: "hidden",
+                border: "3px solid var(--gold-500)",
+                boxShadow: "var(--shadow-gold)",
+                background: "var(--bg-tertiary)",
+                flexShrink: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              {mainPhoto ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={mainPhoto}
+                  alt={person.first_name}
+                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                />
+              ) : (
+                <UserIcon
+                  size={42}
+                  color={person.gender === "male" ? "var(--male-color)" : "var(--female-color)"}
+                />
+              )}
             </div>
-            <h2 style={{ fontSize: "22px", fontWeight: 800, color: "var(--text-primary)" }}>
-              {person.first_name} {person.last_name}
-            </h2>
-            {person.patronymic && (
-              <p style={{ fontSize: "14px", color: "var(--text-secondary)" }}>
-                {person.patronymic}
-              </p>
-            )}
+
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "6px" }}>
+                <span
+                  style={{
+                    fontSize: "11px",
+                    fontWeight: 700,
+                    padding: "2px 8px",
+                    borderRadius: "9999px",
+                    background: sideBadge.bg,
+                    color: sideBadge.color,
+                  }}
+                >
+                  {sideBadge.label}
+                </span>
+
+                {person.relationship_title && (
+                  <span
+                    style={{
+                      fontSize: "12px",
+                      fontWeight: 700,
+                      background: "rgba(212, 175, 55, 0.2)",
+                      color: "var(--text-gold)",
+                      padding: "2px 10px",
+                      borderRadius: "9999px",
+                      border: "1px solid rgba(212, 175, 55, 0.4)",
+                    }}
+                  >
+                    ⭐ {person.relationship_title}
+                  </span>
+                )}
+              </div>
+
+              <h2 style={{ fontSize: "22px", fontWeight: 800, color: "var(--text-primary)" }}>
+                {person.first_name} {person.last_name}
+              </h2>
+              {person.patronymic && (
+                <p style={{ fontSize: "14px", color: "var(--text-secondary)" }}>
+                  {person.patronymic}
+                </p>
+              )}
+            </div>
           </div>
+
           <button onClick={onClose} className="btn btn-secondary btn-icon" style={{ width: "32px", height: "32px" }}>
             <X size={18} />
           </button>
         </div>
 
-        {/* Life details */}
+        {/* Gallery thumbnails if multiple pictures */}
+        {photosList.length > 1 && (
+          <div style={{ marginBottom: "16px", display: "flex", gap: "8px", alignItems: "center" }}>
+            <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>Rasmlar:</span>
+            {photosList.map((url, i) => (
+              <div
+                key={i}
+                onClick={() => setSelectedPhoto(url)}
+                style={{
+                  width: "44px",
+                  height: "44px",
+                  borderRadius: "8px",
+                  overflow: "hidden",
+                  cursor: "pointer",
+                  border: mainPhoto === url ? "2px solid var(--gold-500)" : "1px solid var(--border-subtle)",
+                }}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={url} alt="Gallery" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Quick Contact & Details Ribbon */}
         <div
           className="glass-panel"
           style={{
@@ -100,15 +197,30 @@ export const PersonModal: React.FC<PersonModalProps> = ({
           <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px" }}>
             <UserIcon size={16} color={person.gender === "male" ? "var(--male-color)" : "var(--female-color)"} />
             <span>
-              <strong>Jinsi:</strong> {person.gender === "male" ? "Erkak" : "Ayol"}
+              <strong>Jinsi:</strong> {person.gender === "male" ? "Erkak" : "Ayol"} • {genInfo.title_uz}
             </span>
           </div>
+
+          {person.phone && (
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px" }}>
+              <Phone size={16} color="var(--emerald-500)" />
+              <span>
+                <strong>Tel:</strong>{" "}
+                <a
+                  href={`tel:${person.phone}`}
+                  style={{ color: "var(--emerald-500)", textDecoration: "none", fontWeight: 600 }}
+                >
+                  {person.phone}
+                </a>
+              </span>
+            </div>
+          )}
 
           {person.birth_place && (
             <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px" }}>
               <MapPin size={16} color="var(--text-gold)" />
               <span>
-                <strong>Tug&apos;ilgan joyi:</strong> {person.birth_place}
+                <strong>Manzil:</strong> {person.birth_place}
               </span>
             </div>
           )}
@@ -123,11 +235,11 @@ export const PersonModal: React.FC<PersonModalProps> = ({
           )}
         </div>
 
-        {/* Bio */}
+        {/* Bio / Memories */}
         {person.bio && (
           <div style={{ marginBottom: "20px" }}>
             <h4 style={{ fontSize: "13px", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "6px" }}>
-              Tarjimai hol va esdaliklar
+              Xotiralar va ma&apos;lumotlar
             </h4>
             <p style={{ fontSize: "14px", lineHeight: "1.6", color: "var(--text-primary)", background: "var(--bg-tertiary)", padding: "14px", borderRadius: "var(--radius-md)" }}>
               {person.bio}
@@ -135,10 +247,10 @@ export const PersonModal: React.FC<PersonModalProps> = ({
           </div>
         )}
 
-        {/* Relatives Section */}
+        {/* Family Ties */}
         <div style={{ marginBottom: "20px" }}>
           <h4 style={{ fontSize: "13px", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "10px" }}>
-            Yaqin qarindoshlari
+            Yaqin qarindoshlar aloqasi
           </h4>
           <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
             {father && (
@@ -161,7 +273,7 @@ export const PersonModal: React.FC<PersonModalProps> = ({
                     <strong style={{ color: "var(--text-gold)" }}>Otasi:</strong> {father.first_name} {father.last_name}
                   </span>
                 </div>
-                <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>{father.birth_year || "?"}</span>
+                <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>{father.relationship_title || father.birth_year || "?"}</span>
               </div>
             )}
 
@@ -185,7 +297,31 @@ export const PersonModal: React.FC<PersonModalProps> = ({
                     <strong style={{ color: "var(--text-gold)" }}>Onasi:</strong> {mother.first_name} {mother.last_name}
                   </span>
                 </div>
-                <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>{mother.birth_year || "?"}</span>
+                <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>{mother.relationship_title || mother.birth_year || "?"}</span>
+              </div>
+            )}
+
+            {spouse && (
+              <div
+                onClick={() => onSelectRelative(spouse.id)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "10px 14px",
+                  background: "var(--bg-tertiary)",
+                  borderRadius: "var(--radius-md)",
+                  cursor: "pointer",
+                  border: "1px solid var(--border-subtle)",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <HeartHandshake size={15} color="var(--emerald-500)" />
+                  <span style={{ fontSize: "13px" }}>
+                    <strong style={{ color: "var(--text-gold)" }}>Turmush o&apos;rtog&apos;i:</strong> {spouse.first_name} {spouse.last_name}
+                  </span>
+                </div>
+                <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>{spouse.birth_year || "?"}</span>
               </div>
             )}
 
@@ -202,7 +338,7 @@ export const PersonModal: React.FC<PersonModalProps> = ({
                       className="btn btn-sm btn-secondary"
                       style={{ fontSize: "12px", padding: "4px 10px" }}
                     >
-                      {ch.first_name} {ch.last_name} ({ch.birth_year || "?"})
+                      {ch.first_name} {ch.last_name} ({ch.relationship_title || ch.birth_year || "?"})
                     </button>
                   ))}
                 </div>
@@ -232,11 +368,11 @@ export const PersonModal: React.FC<PersonModalProps> = ({
 
           {isOwner ? (
             <span style={{ color: "var(--emerald-500)", display: "flex", alignItems: "center", gap: "4px", fontWeight: 600 }}>
-              <ShieldCheck size={14} /> Sizning kiritmangiz (Tahrirlash mumkin)
+              <ShieldCheck size={14} /> Sizning kiritmangiz
             </span>
           ) : (
             <span style={{ color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "4px" }}>
-              <Lock size={13} /> Himoyalangan (Faqat ko&apos;rish)
+              <Lock size={13} /> Himoyalangan
             </span>
           )}
         </div>

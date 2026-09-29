@@ -22,15 +22,23 @@ export async function GET(
       FROM people p
       LEFT JOIN users u ON p.created_by = u.id
       WHERE p.id = ?
-    `).get(personId) as (Person & { created_by_name: string }) | undefined;
+    `).get(personId) as (Person & { created_by_name: string; photos?: string }) | undefined;
 
     if (!person) {
       return NextResponse.json({ error: "Shaxs topilmadi" }, { status: 404 });
     }
 
+    let parsedPhotos: string[] = [];
+    if (person.photos) {
+      try { parsedPhotos = JSON.parse(person.photos); } catch { parsedPhotos = []; }
+    } else if (person.photo_url) {
+      parsedPhotos = [person.photo_url];
+    }
+
     return NextResponse.json({
       person: {
         ...person,
+        photos: parsedPhotos,
         is_alive: Boolean(person.is_alive),
         can_edit: currentUser
           ? currentUser.role === "admin" || currentUser.id === person.created_by
@@ -61,7 +69,7 @@ export async function PUT(
     const db = getDb();
 
     // Check existing person & creator ownership
-    const existing = db.prepare("SELECT * FROM people WHERE id = ?").get(personId) as Person | undefined;
+    const existing = db.prepare("SELECT * FROM people WHERE id = ?").get(personId) as (Person & { photos?: string }) | undefined;
     if (!existing) {
       return NextResponse.json({ error: "Shaxs topilmadi" }, { status: 404 });
     }
@@ -88,14 +96,26 @@ export async function PUT(
       birth_place,
       occupation,
       bio,
+      phone,
       father_id,
       mother_id,
       spouse_id,
       generation_level,
+      branch_side,
+      relationship_title,
       photo_url,
+      photos,
     } = body;
 
-    const genLevel = Number(generation_level) || existing.generation_level;
+    const genLevel = generation_level !== undefined ? Number(generation_level) : existing.generation_level;
+    const side = branch_side !== undefined ? branch_side : existing.branch_side;
+
+    let photosJson: string | null = existing.photos || null;
+    if (photos !== undefined) {
+      photosJson = Array.isArray(photos) ? JSON.stringify(photos) : null;
+    } else if (photo_url !== undefined) {
+      photosJson = photo_url ? JSON.stringify([photo_url]) : null;
+    }
 
     db.prepare(`
       UPDATE people SET
@@ -109,11 +129,15 @@ export async function PUT(
         birth_place = ?,
         occupation = ?,
         bio = ?,
+        phone = ?,
         father_id = ?,
         mother_id = ?,
         spouse_id = ?,
         generation_level = ?,
+        branch_side = ?,
+        relationship_title = ?,
         photo_url = ?,
+        photos = ?,
         updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(
@@ -127,11 +151,15 @@ export async function PUT(
       birth_place !== undefined ? (birth_place?.trim() || null) : existing.birth_place,
       occupation !== undefined ? (occupation?.trim() || null) : existing.occupation,
       bio !== undefined ? (bio?.trim() || null) : existing.bio,
+      phone !== undefined ? (phone?.trim() || null) : existing.phone,
       father_id !== undefined ? (father_id ? Number(father_id) : null) : existing.father_id,
       mother_id !== undefined ? (mother_id ? Number(mother_id) : null) : existing.mother_id,
       spouse_id !== undefined ? (spouse_id ? Number(spouse_id) : null) : existing.spouse_id,
       genLevel,
+      side,
+      relationship_title !== undefined ? (relationship_title?.trim() || null) : existing.relationship_title,
       photo_url !== undefined ? (photo_url?.trim() || null) : existing.photo_url,
+      photosJson,
       personId
     );
 
@@ -140,11 +168,17 @@ export async function PUT(
       FROM people p
       LEFT JOIN users u ON p.created_by = u.id
       WHERE p.id = ?
-    `).get(personId) as Person & { created_by_name: string };
+    `).get(personId) as Person & { created_by_name: string; photos?: string };
+
+    let parsedPhotos: string[] = [];
+    if (updated.photos) {
+      try { parsedPhotos = JSON.parse(updated.photos); } catch { parsedPhotos = []; }
+    }
 
     return NextResponse.json({
       person: {
         ...updated,
+        photos: parsedPhotos,
         is_alive: Boolean(updated.is_alive),
         can_edit: true,
       },
@@ -178,7 +212,6 @@ export async function DELETE(
       return NextResponse.json({ error: "Shaxs topilmadi" }, { status: 404 });
     }
 
-    // STRICT GRANULAR PERMISSION: only creator or admin
     if (existing.created_by !== currentUser.id && currentUser.role !== "admin") {
       return NextResponse.json(
         {

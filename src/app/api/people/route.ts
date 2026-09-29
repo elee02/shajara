@@ -17,15 +17,30 @@ export async function GET(req: NextRequest) {
       ORDER BY p.generation_level DESC, p.birth_year ASC, p.id ASC
     `;
 
-    const rows = db.prepare(query).all() as (Person & { created_by_name: string })[];
+    const rows = db.prepare(query).all() as (Person & { created_by_name: string; photos?: string })[];
 
-    const people = rows.map((p) => ({
-      ...p,
-      is_alive: Boolean(p.is_alive),
-      can_edit: currentUser
-        ? currentUser.role === "admin" || currentUser.id === p.created_by
-        : false,
-    }));
+    const people = rows.map((p) => {
+      let parsedPhotos: string[] = [];
+      if (p.photos) {
+        try {
+          parsedPhotos = JSON.parse(p.photos);
+        } catch {
+          parsedPhotos = [];
+        }
+      } else if (p.photo_url) {
+        parsedPhotos = [p.photo_url];
+      }
+
+      return {
+        ...p,
+        photos: parsedPhotos,
+        is_alive: Boolean(p.is_alive),
+        branch_side: p.branch_side || "direct",
+        can_edit: currentUser
+          ? currentUser.role === "admin" || currentUser.id === p.created_by
+          : false,
+      };
+    });
 
     return NextResponse.json({ people, currentUser });
   } catch (error: unknown) {
@@ -56,11 +71,15 @@ export async function POST(req: NextRequest) {
       birth_place,
       occupation,
       bio,
+      phone,
       father_id,
       mother_id,
       spouse_id,
       generation_level,
+      branch_side,
+      relationship_title,
       photo_url,
+      photos,
     } = body;
 
     if (!first_name || !last_name) {
@@ -70,21 +89,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const genLevel = Number(generation_level) || 1;
-    if (genLevel < 1 || genLevel > 7) {
-      return NextResponse.json(
-        { error: "Ajdodlar bo'g'ini 1 dan 7 gacha bo'lishi kerak (Yetti Pusht)" },
-        { status: 400 }
-      );
-    }
+    const genLevel = generation_level !== undefined ? Number(generation_level) : 1;
+    const side = ["father", "mother", "direct", "in_laws"].includes(branch_side) ? branch_side : "direct";
+
+    const photosJson = photos && Array.isArray(photos) ? JSON.stringify(photos) : (photo_url ? JSON.stringify([photo_url]) : null);
 
     const db = getDb();
     const insert = db.prepare(`
       INSERT INTO people (
         first_name, last_name, patronymic, gender, birth_year, death_year, is_alive,
-        birth_place, occupation, bio, father_id, mother_id, spouse_id, generation_level,
-        photo_url, created_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        birth_place, occupation, bio, phone, father_id, mother_id, spouse_id, generation_level,
+        branch_side, relationship_title, photo_url, photos, created_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = insert.run(
@@ -98,11 +114,15 @@ export async function POST(req: NextRequest) {
       birth_place?.trim() || null,
       occupation?.trim() || null,
       bio?.trim() || null,
+      phone?.trim() || null,
       father_id ? Number(father_id) : null,
       mother_id ? Number(mother_id) : null,
       spouse_id ? Number(spouse_id) : null,
       genLevel,
+      side,
+      relationship_title?.trim() || null,
       photo_url?.trim() || null,
+      photosJson,
       currentUser.id
     );
 
@@ -112,11 +132,17 @@ export async function POST(req: NextRequest) {
       FROM people p
       LEFT JOIN users u ON p.created_by = u.id
       WHERE p.id = ?
-    `).get(createdId) as Person & { created_by_name: string };
+    `).get(createdId) as Person & { created_by_name: string; photos?: string };
+
+    let parsedPhotos: string[] = [];
+    if (createdPerson.photos) {
+      try { parsedPhotos = JSON.parse(createdPerson.photos); } catch { parsedPhotos = []; }
+    }
 
     return NextResponse.json({
       person: {
         ...createdPerson,
+        photos: parsedPhotos,
         is_alive: Boolean(createdPerson.is_alive),
         can_edit: true,
       },

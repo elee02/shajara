@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import { Person, User } from "@/lib/types";
+import { Person, User, BranchSide } from "@/lib/types";
 import { Navbar } from "@/components/Navbar";
 import { TreeView } from "@/components/TreeView";
 import { ListView } from "@/components/ListView";
@@ -11,7 +11,6 @@ import { AuthModal } from "@/components/AuthModal";
 import { ExportPdfModal } from "@/components/ExportPdfModal";
 import { 
   Users, 
-  Layers, 
   ShieldCheck, 
   Info,
   CheckCircle,
@@ -32,6 +31,7 @@ export default function Home() {
   const [presetFatherId, setPresetFatherId] = useState<number | null>(null);
   const [presetMotherId, setPresetMotherId] = useState<number | null>(null);
   const [presetGenLevel, setPresetGenLevel] = useState<number | null>(null);
+  const [presetBranchSide, setPresetBranchSide] = useState<BranchSide>("direct");
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
 
@@ -48,12 +48,10 @@ export default function Home() {
     try {
       setLoading(true);
 
-      // Fetch current session
       const authRes = await fetch("/api/auth/me");
       const authData = await authRes.json();
       setCurrentUser(authData.user);
 
-      // Fetch people
       const peopleRes = await fetch("/api/people");
       const peopleData = await peopleRes.json();
       if (peopleRes.ok) {
@@ -71,14 +69,12 @@ export default function Home() {
     fetchData();
   }, [fetchData]);
 
-  // Theme toggle
   const toggleTheme = () => {
     const nextTheme = theme === "dark" ? "light" : "dark";
     setTheme(nextTheme);
     document.documentElement.setAttribute("data-theme", nextTheme);
   };
 
-  // Logout handler
   const handleLogout = async () => {
     try {
       await fetch("/api/auth/logout", { method: "POST" });
@@ -90,7 +86,6 @@ export default function Home() {
     }
   };
 
-  // Add person handler
   const handleOpenAddModal = (parentId?: number, relationType?: "child" | "father") => {
     if (!currentUser) {
       setIsAuthOpen(true);
@@ -108,26 +103,25 @@ export default function Home() {
         setPresetFatherId(null);
         setPresetMotherId(parentId);
       }
-      setPresetGenLevel(Math.max(1, (parent?.generation_level || 2) - 1));
+      setPresetGenLevel((parent?.generation_level || 1) - 1);
+      setPresetBranchSide(parent?.branch_side || "direct");
     } else {
       setPresetFatherId(null);
       setPresetMotherId(null);
       setPresetGenLevel(1);
+      setPresetBranchSide("direct");
     }
 
     setIsFormOpen(true);
   };
 
-  // Edit person handler
   const handleEditPerson = (person: Person) => {
     setPersonToEdit(person);
     setIsFormOpen(true);
   };
 
-  // Save person (POST or PUT)
   const handleSavePerson = async (formData: Partial<Person>) => {
     if (personToEdit) {
-      // PUT
       const res = await fetch(`/api/people/${personToEdit.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -139,9 +133,8 @@ export default function Home() {
         throw new Error(data.error || "Tahrirlashda xatolik");
       }
 
-      showToast("Ma'lumot muvaffaqiyatli yangilandi");
+      showToast("Qarindosh ma'lumoti muvaffaqiyatli yangilandi");
     } else {
-      // POST
       const res = await fetch("/api/people", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -153,13 +146,12 @@ export default function Home() {
         throw new Error(data.error || "Qo'shishda xatolik");
       }
 
-      showToast("Yangi shaxs shajaraga muvaffaqiyatli qo'shildi");
+      showToast("Yangi qarindosh shajaraga muvaffaqiyatli qo'shildi");
     }
 
     fetchData();
   };
 
-  // Delete person handler
   const handleDeletePerson = async (personId: number) => {
     try {
       const res = await fetch(`/api/people/${personId}`, {
@@ -183,8 +175,10 @@ export default function Home() {
     }
   };
 
-  // Stats
-  const totalGenerations = new Set(people.map((p) => p.generation_level)).size;
+  // Branch stats
+  const fatherSideCount = people.filter((p) => p.branch_side === "father").length;
+  const motherSideCount = people.filter((p) => p.branch_side === "mother").length;
+  const directSideCount = people.filter((p) => p.branch_side === "direct").length;
   const myEntriesCount = currentUser ? people.filter((p) => p.created_by === currentUser.id).length : 0;
 
   return (
@@ -230,7 +224,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* Hero / Quick Stats Ribbon */}
+      {/* Hero / Family Branches Ribbon */}
       <div
         className="no-print"
         style={{
@@ -248,15 +242,27 @@ export default function Home() {
         <div style={{ display: "flex", alignItems: "center", gap: "20px", flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--text-secondary)" }}>
             <Users size={16} color="var(--text-gold)" />
-            <span>Jami shaxslar: <strong style={{ color: "var(--text-primary)" }}>{people.length}</strong></span>
+            <span>Jami: <strong style={{ color: "var(--text-primary)" }}>{people.length}</strong> qarindosh</span>
           </div>
+
           <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--text-secondary)" }}>
-            <Layers size={16} color="var(--emerald-500)" />
-            <span>Qamrab olingan bo&apos;g&apos;inlar: <strong style={{ color: "var(--text-primary)" }}>{totalGenerations} / 7</strong></span>
+            <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#38bdf8" }} />
+            <span>Ota tomoni: <strong style={{ color: "#38bdf8" }}>{fatherSideCount}</strong></span>
           </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--text-secondary)" }}>
+            <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#f472b6" }} />
+            <span>Ona tomoni: <strong style={{ color: "#f472b6" }}>{motherSideCount}</strong></span>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--text-secondary)" }}>
+            <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#34d399" }} />
+            <span>O&apos;z avlodlari / Jigarlar: <strong style={{ color: "#34d399" }}>{directSideCount}</strong></span>
+          </div>
+
           {currentUser && (
             <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--text-secondary)" }}>
-              <ShieldCheck size={16} color="var(--male-color)" />
+              <ShieldCheck size={16} color="var(--text-gold)" />
               <span>Siz kiritgan yozuvlar: <strong style={{ color: "var(--text-primary)" }}>{myEntriesCount}</strong></span>
             </div>
           )}
@@ -264,7 +270,7 @@ export default function Home() {
 
         <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--text-muted)", fontSize: "12px" }}>
           <Info size={14} />
-          <span>Har bir oila a&apos;zosi faqat o&apos;zi kiritgan ma&apos;lumotlarni tahrirlashi mumkin.</span>
+          <span>Suratlar va aloqalar bilan barcha qarindoshlar doimo yodingizda saqlanadi.</span>
         </div>
       </div>
 
@@ -272,7 +278,7 @@ export default function Home() {
       {loading ? (
         <div style={{ height: "60vh", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "16px" }}>
           <div style={{ width: "40px", height: "40px", border: "3px solid var(--border-primary)", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
-          <p style={{ color: "var(--text-muted)", fontSize: "14px" }}>Shajara ma&apos;lumotlari yuklanmoqda...</p>
+          <p style={{ color: "var(--text-muted)", fontSize: "14px" }}>Qarindoshlar ma&apos;lumotlari yuklanmoqda...</p>
           <style>{`@keyframes spin { 100% { transform: rotate(360deg); } }`}</style>
         </div>
       ) : activeView === "tree" ? (
@@ -316,6 +322,7 @@ export default function Home() {
         presetFatherId={presetFatherId}
         presetMotherId={presetMotherId}
         presetGenLevel={presetGenLevel}
+        presetBranchSide={presetBranchSide}
         allPeople={people}
         onSave={handleSavePerson}
       />

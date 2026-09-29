@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { Person, UZBEK_GENERATIONS } from "@/lib/types";
+import { Person, UZBEK_GENERATION_LABELS } from "@/lib/types";
 import { X, FileDown, Printer, CheckCircle, Sparkles } from "lucide-react";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";

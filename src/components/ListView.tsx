@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
-import { Person, UZBEK_GENERATIONS, User } from "@/lib/types";
+import { Person, User, BranchSide, UZBEK_GENERATION_LABELS } from "@/lib/types";
 import { 
   Search, 
   Filter, 
@@ -11,7 +11,9 @@ import {
   Lock, 
   Plus, 
   MapPin, 
-  Briefcase 
+  Briefcase,
+  Phone,
+  Users
 } from "lucide-react";
 
 interface ListViewProps {
@@ -32,35 +34,41 @@ export const ListView: React.FC<ListViewProps> = ({
   onOpenAddModal,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedGen, setSelectedGen] = useState<string>("all");
+  const [selectedSide, setSelectedSide] = useState<"all" | BranchSide>("all");
   const [onlyMine, setOnlyMine] = useState(false);
 
   const filteredPeople = useMemo(() => {
     return people.filter((p) => {
-      // Search text match
       const query = searchQuery.toLowerCase().trim();
-      const nameMatch =
+      const match =
         p.first_name.toLowerCase().includes(query) ||
         p.last_name.toLowerCase().includes(query) ||
         (p.patronymic && p.patronymic.toLowerCase().includes(query)) ||
+        (p.relationship_title && p.relationship_title.toLowerCase().includes(query)) ||
         (p.birth_place && p.birth_place.toLowerCase().includes(query)) ||
-        (p.occupation && p.occupation.toLowerCase().includes(query));
+        (p.occupation && p.occupation.toLowerCase().includes(query)) ||
+        (p.phone && p.phone.includes(query));
 
-      if (query && !nameMatch) return false;
+      if (query && !match) return false;
 
-      // Generation filter
-      if (selectedGen !== "all" && p.generation_level !== Number(selectedGen)) {
+      if (selectedSide !== "all" && p.branch_side !== selectedSide) {
         return false;
       }
 
-      // My entries only
       if (onlyMine && currentUser && p.created_by !== currentUser.id) {
         return false;
       }
 
       return true;
     });
-  }, [people, searchQuery, selectedGen, onlyMine, currentUser]);
+  }, [people, searchQuery, selectedSide, onlyMine, currentUser]);
+
+  const sideLabels: Record<BranchSide, { label: string; color: string; bg: string }> = {
+    father: { label: "Ota tomoni", color: "#38bdf8", bg: "rgba(56, 189, 248, 0.12)" },
+    mother: { label: "Ona tomoni", color: "#f472b6", bg: "rgba(244, 114, 182, 0.12)" },
+    direct: { label: "O'z oilasi & Avlodlar", color: "#34d399", bg: "rgba(52, 211, 153, 0.12)" },
+    in_laws: { label: "Qudachilik", color: "#c084fc", bg: "rgba(192, 132, 252, 0.12)" },
+  };
 
   return (
     <div style={{ maxWidth: "1200px", margin: "0 auto", padding: "28px 20px" }}>
@@ -94,29 +102,28 @@ export const ListView: React.FC<ListViewProps> = ({
             type="text"
             className="form-input"
             style={{ paddingLeft: "42px" }}
-            placeholder="Ism, familiya, kasbi yoki tug'ilgan joyi bo'yicha qidiring..."
+            placeholder="Ism, familiya, qarindoshlik (Tog'a, Amaki), telefon yoki kasbi..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
 
-        {/* Filters Group */}
+        {/* Side and Options Filters */}
         <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            <Filter size={16} color="var(--text-muted)" />
+            <Users size={16} color="var(--text-muted)" />
             <select
-              id="select-filter-gen"
+              id="select-filter-side"
               className="form-select"
-              style={{ width: "auto", minWidth: "160px" }}
-              value={selectedGen}
-              onChange={(e) => setSelectedGen(e.target.value)}
+              style={{ width: "auto", minWidth: "170px" }}
+              value={selectedSide}
+              onChange={(e) => setSelectedSide(e.target.value as "all" | BranchSide)}
             >
-              <option value="all">Barcha bo&apos;g&apos;inlar</option>
-              {[7, 6, 5, 4, 3, 2, 1].map((g) => (
-                <option key={g} value={g}>
-                  {g}-bo&apos;g&apos;in ({UZBEK_GENERATIONS[g].title_uz})
-                </option>
-              ))}
+              <option value="all">Barcha shoxobchalar</option>
+              <option value="father">Ota tomoni (Paternal)</option>
+              <option value="mother">Ona tomoni (Maternal)</option>
+              <option value="direct">O&apos;z avlodlari / Jigarlar</option>
+              <option value="in_laws">Qudachilik</option>
             </select>
           </div>
 
@@ -155,7 +162,7 @@ export const ListView: React.FC<ListViewProps> = ({
               className="btn btn-primary"
             >
               <Plus size={16} />
-              <span>Yangi shaxs</span>
+              <span>Yangi qarindosh</span>
             </button>
           )}
         </div>
@@ -172,10 +179,10 @@ export const ListView: React.FC<ListViewProps> = ({
         }}
       >
         <span style={{ fontSize: "14px", color: "var(--text-muted)" }}>
-          Topildi: <strong style={{ color: "var(--text-primary)" }}>{filteredPeople.length}</strong> ta shaxs
+          Topildi: <strong style={{ color: "var(--text-primary)" }}>{filteredPeople.length}</strong> ta qarindosh
         </span>
         <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
-          🔒 Siz faqat o&apos;zingiz kiritgan yozuvlarni o&apos;zgartirishingiz mumkin
+          📷 Yuz suratlari va kontaktlar saqlangan
         </span>
       </div>
 
@@ -191,10 +198,10 @@ export const ListView: React.FC<ListViewProps> = ({
         >
           <UserIcon size={48} style={{ margin: "0 auto 16px", opacity: 0.4 }} />
           <h3 style={{ fontSize: "18px", color: "var(--text-primary)", marginBottom: "8px" }}>
-            Hech qanday ma&apos;lumot topilmadi
+            Hech qanday qarindosh topilmadi
           </h3>
           <p style={{ fontSize: "14px", maxWidth: "400px", margin: "0 auto" }}>
-            Qidiruv so&apos;zini o&apos;zgartirib ko&apos;ring yoki yangi oila a&apos;zosini qo&apos;shing.
+            Qidiruvni o&apos;zgartirib ko&apos;ring yoki yangi qarindosh suratini va ma&apos;lumotini kiriting.
           </p>
         </div>
       ) : (
@@ -208,6 +215,8 @@ export const ListView: React.FC<ListViewProps> = ({
           {filteredPeople.map((person) => {
             const isOwner = currentUser?.id === person.created_by || currentUser?.role === "admin";
             const isMale = person.gender === "male";
+            const portrait = person.photo_url || (person.photos && person.photos[0]) || null;
+            const sideInfo = sideLabels[person.branch_side] || sideLabels.direct;
 
             return (
               <div
@@ -215,7 +224,7 @@ export const ListView: React.FC<ListViewProps> = ({
                 className="glass-panel"
                 onClick={() => onSelectPerson(person)}
                 style={{
-                  padding: "20px",
+                  padding: "18px",
                   cursor: "pointer",
                   display: "flex",
                   flexDirection: "column",
@@ -225,10 +234,38 @@ export const ListView: React.FC<ListViewProps> = ({
                 }}
               >
                 <div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "8px" }}>
-                    <span className={`gen-badge gen-badge-${person.generation_level}`}>
-                      {person.generation_level}-bo&apos;g&apos;in • {UZBEK_GENERATIONS[person.generation_level]?.title_uz}
-                    </span>
+                  {/* Top Badges */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                      <span
+                        style={{
+                          fontSize: "11px",
+                          fontWeight: 700,
+                          padding: "2px 8px",
+                          borderRadius: "9999px",
+                          background: sideInfo.bg,
+                          color: sideInfo.color,
+                        }}
+                      >
+                        {sideInfo.label}
+                      </span>
+
+                      {person.relationship_title && (
+                        <span
+                          style={{
+                            fontSize: "11px",
+                            fontWeight: 700,
+                            padding: "2px 8px",
+                            borderRadius: "9999px",
+                            background: "rgba(212, 175, 55, 0.15)",
+                            color: "var(--text-gold)",
+                          }}
+                        >
+                          ⭐ {person.relationship_title}
+                        </span>
+                      )}
+                    </div>
+
                     <span
                       style={{
                         fontSize: "11px",
@@ -240,21 +277,63 @@ export const ListView: React.FC<ListViewProps> = ({
                     </span>
                   </div>
 
-                  <h3 style={{ fontSize: "18px", fontWeight: 700, color: "var(--text-primary)" }}>
-                    {person.first_name} {person.last_name}
-                  </h3>
-                  {person.patronymic && (
-                    <p style={{ fontSize: "13px", color: "var(--text-secondary)", marginTop: "2px" }}>
-                      {person.patronymic}
-                    </p>
-                  )}
+                  {/* Portrait + Name */}
+                  <div style={{ display: "flex", gap: "14px", alignItems: "center" }}>
+                    <div
+                      style={{
+                        width: "60px",
+                        height: "60px",
+                        borderRadius: "50%",
+                        overflow: "hidden",
+                        border: `2px solid ${isMale ? "var(--male-color)" : "var(--female-color)"}`,
+                        background: "var(--bg-tertiary)",
+                        flexShrink: 0,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      {portrait ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={portrait}
+                          alt={person.first_name}
+                          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                        />
+                      ) : (
+                        <UserIcon
+                          size={30}
+                          color={isMale ? "var(--male-color)" : "var(--female-color)"}
+                        />
+                      )}
+                    </div>
 
-                  <p style={{ fontSize: "13px", color: "var(--text-gold)", marginTop: "6px", fontWeight: 600 }}>
-                    {person.birth_year ? `${person.birth_year}-yil` : "?"} —{" "}
-                    {person.is_alive ? "hozir" : person.death_year ? `${person.death_year}-yil` : "?"}
-                  </p>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <h3 style={{ fontSize: "17px", fontWeight: 700, color: "var(--text-primary)" }}>
+                        {person.first_name} {person.last_name}
+                      </h3>
+                      {person.patronymic && (
+                        <p style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "2px" }}>
+                          {person.patronymic}
+                        </p>
+                      )}
+                      <p style={{ fontSize: "12px", color: "var(--text-gold)", marginTop: "4px", fontWeight: 600 }}>
+                        {person.birth_year ? `${person.birth_year}-yil` : "?"} —{" "}
+                        {person.is_alive ? "hozir" : person.death_year ? `${person.death_year}-yil` : "?"}
+                      </p>
+                    </div>
+                  </div>
 
-                  <div style={{ marginTop: "10px", display: "flex", flexDirection: "column", gap: "4px", fontSize: "12px", color: "var(--text-muted)" }}>
+                  {/* Contact & Location Info */}
+                  <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "5px", fontSize: "12px", color: "var(--text-muted)" }}>
+                    {person.phone && (
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--emerald-500)", fontWeight: 600 }}>
+                        <Phone size={13} />
+                        <a href={`tel:${person.phone}`} onClick={(e) => e.stopPropagation()} style={{ color: "inherit", textDecoration: "none" }}>
+                          {person.phone}
+                        </a>
+                      </div>
+                    )}
                     {person.birth_place && (
                       <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                         <MapPin size={13} />
