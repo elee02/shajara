@@ -1,0 +1,18 @@
+version: "3.8"
+
+services:
+  shajara:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shajara-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - JWT_SECRET=change-this-to-a-very-secure-random-secret-key-32chars
+    volumes:
+      # Persistent SQLite database volume
+      - ./data:/app/data
