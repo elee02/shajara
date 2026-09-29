@@ -38,6 +38,13 @@ interface ConnectorLine {
   type: "parent-child" | "spouse";
 }
 
+interface FamilyUnit {
+  id: string;
+  primary: Person;
+  spouse?: Person;
+  branch: "father" | "central" | "mother";
+}
+
 export const TreeView: React.FC<TreeViewProps> = ({
   people,
   currentUser,
@@ -45,7 +52,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
   onAddRelated,
   onEditPerson,
 }) => {
-  const [scale, setScale] = useState<number>(0.9);
+  const [scale, setScale] = useState<number>(0.85);
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 10 });
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -61,10 +68,9 @@ export const TreeView: React.FC<TreeViewProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
 
-  // Initialize focus person: default to current user's entry (or person 7 Javohir)
+  // Initialize focus person: default to Javohir (id 7) or first person
   useEffect(() => {
     if (focusPersonId === null && people.length > 0) {
-      // Find person matching user or fallback to Javohir (id 7) or first person
       const selfPerson = people.find((p) => p.relationship_title === "O'zi" || p.id === 7) || people[0];
       if (selfPerson) {
         setFocusPersonId(selfPerson.id);
@@ -82,55 +88,83 @@ export const TreeView: React.FC<TreeViewProps> = ({
     return people.filter((p) => p.branch_side === activeSide);
   }, [people, activeSide]);
 
-  // Group into generation levels
+  // Distinct generation levels present in dataset (e.g. 7 down to 0)
   const uniqueGenLevels = useMemo(() => {
     return Array.from(new Set(people.map((p) => p.generation_level))).sort((a, b) => b - a);
   }, [people]);
 
-  // Group each generation's people into Family Units (Couples & Individuals)
-  const familyUnitsByGen = useMemo(() => {
+  // Helper to classify a unit into Paternal, Central Direct, or Maternal
+  const classifyUnit = useCallback((primary: Person, spouse?: Person): "father" | "central" | "mother" => {
+    // If unit is the marital bridge (Ulug'bek & Dildora)
+    if (
+      (primary.id === 6 && spouse?.id === 15) ||
+      (primary.id === 15 && spouse?.id === 6)
+    ) {
+      return "central";
+    }
+    // Direct core line (Javohir, Shahnoza, Temur, Azizbek)
+    if (primary.branch_side === "direct" || spouse?.branch_side === "direct") {
+      return "central";
+    }
+    if (primary.branch_side === "mother" || spouse?.branch_side === "mother") {
+      return "mother";
+    }
+    if (primary.branch_side === "father" || spouse?.branch_side === "father") {
+      return "father";
+    }
+    return "central";
+  }, []);
+
+  // Group each generation into 3 clearly organized lineage lanes
+  const organizedGenerations = useMemo(() => {
     return uniqueGenLevels.map((gen) => {
       const genPeople = filteredPeople.filter((p) => p.generation_level === gen);
       const visited = new Set<number>();
-      const units: { id: string; primary: Person; spouse?: Person }[] = [];
+      const allUnits: FamilyUnit[] = [];
 
       genPeople.forEach((person) => {
         if (visited.has(person.id)) return;
 
-        // Check if spouse exists in same generation or tree
         let spouse: Person | undefined = undefined;
         if (person.spouse_id) {
-          spouse = genPeople.find((p) => p.id === person.spouse_id);
-          if (!spouse) {
-            spouse = people.find((p) => p.id === person.spouse_id);
-          }
+          spouse = genPeople.find((p) => p.id === person.spouse_id) || people.find((p) => p.id === person.spouse_id);
         } else {
-          // Check reverse
           spouse = genPeople.find((p) => p.spouse_id === person.id);
         }
 
         if (spouse) {
           visited.add(person.id);
           visited.add(spouse.id);
-          // Put male first if applicable
-          if (person.gender === "female" && spouse.gender === "male") {
-            units.push({ id: `couple-${spouse.id}-${person.id}`, primary: spouse, spouse: person });
-          } else {
-            units.push({ id: `couple-${person.id}-${spouse.id}`, primary: person, spouse });
-          }
+
+          const orderedPrimary = person.gender === "female" && spouse.gender === "male" ? spouse : person;
+          const orderedSpouse = person.gender === "female" && spouse.gender === "male" ? person : spouse;
+
+          allUnits.push({
+            id: `couple-${orderedPrimary.id}-${orderedSpouse.id}`,
+            primary: orderedPrimary,
+            spouse: orderedSpouse,
+            branch: classifyUnit(orderedPrimary, orderedSpouse),
+          });
         } else {
           visited.add(person.id);
-          units.push({ id: `single-${person.id}`, primary: person });
+          allUnits.push({
+            id: `single-${person.id}`,
+            primary: person,
+            branch: classifyUnit(person),
+          });
         }
       });
 
       return {
         level: gen,
         label: UZBEK_GENERATION_LABELS[gen] || { title_uz: `${gen}-bo'g'in`, desc: "" },
-        units,
+        fatherLane: allUnits.filter((u) => u.branch === "father"),
+        centralLane: allUnits.filter((u) => u.branch === "central"),
+        motherLane: allUnits.filter((u) => u.branch === "mother"),
+        totalCount: allUnits.length,
       };
     });
-  }, [uniqueGenLevels, filteredPeople, people]);
+  }, [uniqueGenLevels, filteredPeople, people, classifyUnit]);
 
   // Recompute SVG connector lines based on DOM positions
   const updateConnectorLines = useCallback(() => {
@@ -139,7 +173,6 @@ export const TreeView: React.FC<TreeViewProps> = ({
     const canvasRect = canvasRef.current.getBoundingClientRect();
     const newLines: ConnectorLine[] = [];
 
-    // Map card positions
     const cardPositions = new Map<number, { topX: number; topY: number; bottomX: number; bottomY: number; rightX: number; leftX: number; midY: number }>();
 
     people.forEach((person) => {
@@ -224,19 +257,17 @@ export const TreeView: React.FC<TreeViewProps> = ({
     setLines(newLines);
   }, [people, scale]);
 
-  // Recalculate positions after DOM renders
   useEffect(() => {
     const timer = setTimeout(() => {
       updateConnectorLines();
-    }, 150);
+    }, 200);
     window.addEventListener("resize", updateConnectorLines);
     return () => {
       clearTimeout(timer);
       window.removeEventListener("resize", updateConnectorLines);
     };
-  }, [updateConnectorLines, familyUnitsByGen, activeSide]);
+  }, [updateConnectorLines, organizedGenerations, activeSide]);
 
-  // Mouse pan handlers
   const handleMouseDown = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest(".person-node-card") || (e.target as HTMLElement).closest("button") || (e.target as HTMLElement).closest("select")) {
       return;
@@ -258,7 +289,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
   };
 
   const resetZoom = () => {
-    setScale(0.9);
+    setScale(0.85);
     setPan({ x: 0, y: 10 });
   };
 
@@ -280,7 +311,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
         background: "radial-gradient(ellipse at center, var(--bg-secondary) 0%, var(--bg-primary) 100%)",
       }}
     >
-      {/* Zoom and Reset Controls */}
+      {/* Zoom controls */}
       <div
         className="no-print"
         style={{
@@ -303,7 +334,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
           id="btn-zoom-in"
           onClick={() => {
             setScale((s) => Math.min(s + 0.15, 2.0));
-            setTimeout(updateConnectorLines, 50);
+            setTimeout(updateConnectorLines, 60);
           }}
           className="btn btn-secondary btn-icon"
           title="Kattalashtirish"
@@ -315,7 +346,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
           id="btn-zoom-out"
           onClick={() => {
             setScale((s) => Math.max(s - 0.15, 0.4));
-            setTimeout(updateConnectorLines, 50);
+            setTimeout(updateConnectorLines, 60);
           }}
           className="btn btn-secondary btn-icon"
           title="Kichiklashtirish"
@@ -334,7 +365,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
         </button>
       </div>
 
-      {/* Floating Top Controls: Dynamic Kinship & Branch Filter */}
+      {/* Floating Top Controls: Dynamic Kinship & Branch Lanes */}
       <div
         className="no-print"
         style={{
@@ -374,7 +405,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
               gap: "6px",
               fontWeight: 700,
             }}
-            title="Qarindoshlik nomlarini dinamik ko'rsatish"
+            title="Qarindoshlik nomlarini har bir shaxsga qarab dinamik o'zgartirish"
           >
             {enableKinship ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}
             <span>Nisbiy nomlanish: {enableKinship ? "YOQILGAN" : "O'CHIRILGAN"}</span>
@@ -402,7 +433,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
               >
                 {people.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.first_name} {p.last_name} ({p.birth_year || "?"})
+                    {p.first_name} {p.last_name} ({p.relationship_title || `${p.generation_level}-bo'g'in`})
                   </option>
                 ))}
               </select>
@@ -410,7 +441,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
           )}
         </div>
 
-        {/* Row 2: Branch Side Quick Filter */}
+        {/* Row 2: Branch Filter */}
         <div
           style={{
             display: "flex",
@@ -426,7 +457,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
           }}
         >
           <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--text-gold)", display: "flex", alignItems: "center", gap: "4px" }}>
-            <Users size={13} /> Tarmoq:
+            <Users size={13} /> Ko&apos;rinish:
           </span>
           <button
             onClick={() => setActiveSide("all")}
@@ -439,7 +470,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
               borderRadius: "5px",
             }}
           >
-            Barchasi ({people.length})
+            Barcha shoxobchalar ({people.length})
           </button>
           <button
             onClick={() => setActiveSide("father")}
@@ -453,7 +484,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
               borderRadius: "5px",
             }}
           >
-            Ota tomoni
+            👨‍🦳 Ota tomoni
           </button>
           <button
             onClick={() => setActiveSide("mother")}
@@ -467,7 +498,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
               borderRadius: "5px",
             }}
           >
-            Ona tomoni
+            👩‍🦳 Ona tomoni
           </button>
           <button
             onClick={() => setActiveSide("direct")}
@@ -481,12 +512,12 @@ export const TreeView: React.FC<TreeViewProps> = ({
               borderRadius: "5px",
             }}
           >
-            O&apos;z avlodlari
+            🌱 O&apos;z oilasi
           </button>
         </div>
       </div>
 
-      {/* Pannable & Zoomable Canvas Area */}
+      {/* Pannable Canvas Container */}
       <div
         ref={canvasRef}
         id="tree-diagram-export-target"
@@ -494,12 +525,12 @@ export const TreeView: React.FC<TreeViewProps> = ({
           transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
           transformOrigin: "top center",
           transition: isDragging ? "none" : "transform 0.15s ease-out",
-          padding: "100px 60px 180px 60px",
+          padding: "110px 80px 220px 80px",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
-          gap: "70px",
-          minWidth: "1500px",
+          gap: "80px",
+          minWidth: "1800px",
           position: "relative",
         }}
       >
@@ -516,7 +547,6 @@ export const TreeView: React.FC<TreeViewProps> = ({
           }}
         >
           <defs>
-            {/* Arrow marker for parent-child links */}
             <marker
               id="arrow-down"
               viewBox="0 0 10 10"
@@ -529,7 +559,6 @@ export const TreeView: React.FC<TreeViewProps> = ({
               <path d="M 0 1 L 8 5 L 0 9 z" fill="var(--gold-500)" />
             </marker>
 
-            {/* Marriage Heart / Knot marker */}
             <linearGradient id="gold-line-grad" x1="0%" y1="0%" x2="100%" y2="100%">
               <stop offset="0%" stopColor="#fcd34d" />
               <stop offset="50%" stopColor="#f59e0b" />
@@ -539,7 +568,6 @@ export const TreeView: React.FC<TreeViewProps> = ({
 
           {lines.map((line) => {
             if (line.type === "spouse") {
-              // Horizontal marriage connection line with rings
               return (
                 <g key={line.id}>
                   <line
@@ -562,7 +590,6 @@ export const TreeView: React.FC<TreeViewProps> = ({
                 </g>
               );
             } else {
-              // Cubic bezier curve descending from parent to child
               const midY = (line.fromY + line.toY) / 2;
               const pathD = `M ${line.fromX} ${line.fromY} C ${line.fromX} ${midY}, ${line.toX} ${midY}, ${line.toX} ${line.toY}`;
 
@@ -574,16 +601,20 @@ export const TreeView: React.FC<TreeViewProps> = ({
                   stroke="url(#gold-line-grad)"
                   strokeWidth="2.5"
                   markerEnd="url(#arrow-down)"
-                  opacity="0.8"
+                  opacity="0.85"
                 />
               );
             }
           })}
         </svg>
 
-        {/* Generations & Couple Units */}
-        {familyUnitsByGen.map((genTier) => {
-          if (genTier.units.length === 0) return null;
+        {/* Clean Lineage-Lane Layout per Generation */}
+        {organizedGenerations.map((genTier) => {
+          if (genTier.totalCount === 0) return null;
+
+          const hasMaternal = genTier.motherLane.length > 0;
+          const hasPaternal = genTier.fatherLane.length > 0;
+          const hasCentral = genTier.centralLane.length > 0;
 
           return (
             <div
@@ -605,9 +636,9 @@ export const TreeView: React.FC<TreeViewProps> = ({
                   gap: "10px",
                   background: "var(--bg-secondary)",
                   border: "1px solid var(--border-primary)",
-                  padding: "6px 22px",
+                  padding: "6px 24px",
                   borderRadius: "9999px",
-                  marginBottom: "24px",
+                  marginBottom: "26px",
                   boxShadow: "var(--shadow-sm)",
                 }}
               >
@@ -625,70 +656,76 @@ export const TreeView: React.FC<TreeViewProps> = ({
                 </span>
               </div>
 
-              {/* Family Units (Couples & Individuals) */}
+              {/* 3 Clear Branch Columns (Lanes) */}
               <div
                 style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  justifyContent: "center",
-                  gap: "40px",
-                  maxWidth: "1800px",
+                  display: "grid",
+                  gridTemplateColumns: hasMaternal && hasPaternal ? "1fr auto 1fr" : "1fr",
+                  gap: "50px",
+                  width: "100%",
+                  maxWidth: "1850px",
+                  alignItems: "start",
                 }}
               >
-                {genTier.units.map((unit) => {
-                  return (
-                    <div
-                      key={unit.id}
-                      className="family-unit-cluster"
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "16px",
-                        background: unit.spouse ? "rgba(212, 175, 55, 0.04)" : "transparent",
-                        border: unit.spouse ? "1px dashed rgba(212, 175, 55, 0.25)" : "none",
-                        padding: unit.spouse ? "8px 12px" : "0",
-                        borderRadius: "18px",
-                      }}
-                    >
-                      {/* Primary Person */}
-                      {renderPersonCard(unit.primary)}
+                {/* 1. Left Lane: Paternal Branch (Ota Tomoni) */}
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: hasMaternal ? "flex-end" : "center",
+                    gap: "16px",
+                  }}
+                >
+                  {hasPaternal && genTier.level <= 3 && (
+                    <span style={{ fontSize: "11px", fontWeight: 700, color: "#38bdf8", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                      👨‍🦳 Ota tomoni
+                    </span>
+                  )}
+                  <div style={{ display: "flex", flexWrap: "wrap", justifyContent: hasMaternal ? "flex-end" : "center", gap: "28px" }}>
+                    {genTier.fatherLane.map((unit) => renderFamilyUnit(unit))}
+                  </div>
+                </div>
 
-                      {/* Marital Badge between husband & wife */}
-                      {unit.spouse && (
-                        <div
-                          style={{
-                            display: "flex",
-                            flexDirection: "column",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            gap: "2px",
-                            color: "var(--text-gold)",
-                          }}
-                          title="Turmush o'rtoqlar (Er-Xotin)"
-                        >
-                          <div
-                            style={{
-                              width: "28px",
-                              height: "28px",
-                              borderRadius: "50%",
-                              background: "rgba(212, 175, 55, 0.15)",
-                              border: "1px solid var(--gold-500)",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                            }}
-                          >
-                            <Heart size={14} fill="#f59e0b" color="#f59e0b" />
-                          </div>
-                          <span style={{ fontSize: "9px", fontWeight: 700, color: "var(--text-gold)" }}>ER-XOTIN</span>
-                        </div>
-                      )}
-
-                      {/* Spouse Person */}
-                      {unit.spouse && renderPersonCard(unit.spouse)}
+                {/* 2. Middle Lane: Core Family (O'z oilasi / Parents couple) */}
+                {hasCentral && (
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      gap: "16px",
+                      padding: "0 10px",
+                    }}
+                  >
+                    {genTier.level <= 2 && (
+                      <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--text-gold)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                        🏛️ Markaziy oila
+                      </span>
+                    )}
+                    <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "28px" }}>
+                      {genTier.centralLane.map((unit) => renderFamilyUnit(unit))}
                     </div>
-                  );
-                })}
+                  </div>
+                )}
+
+                {/* 3. Right Lane: Maternal Branch (Ona Tomoni) */}
+                {hasMaternal && (
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "flex-start",
+                      gap: "16px",
+                    }}
+                  >
+                    <span style={{ fontSize: "11px", fontWeight: 700, color: "#f472b6", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                      👩‍🦳 Ona tomoni
+                    </span>
+                    <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-start", gap: "28px" }}>
+                      {genTier.motherLane.map((unit) => renderFamilyUnit(unit))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           );
@@ -697,13 +734,65 @@ export const TreeView: React.FC<TreeViewProps> = ({
     </div>
   );
 
+  function renderFamilyUnit(unit: FamilyUnit) {
+    return (
+      <div
+        key={unit.id}
+        className="family-unit-cluster"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "14px",
+          background: unit.spouse ? "rgba(212, 175, 55, 0.05)" : "transparent",
+          border: unit.spouse ? "1px dashed rgba(212, 175, 55, 0.3)" : "none",
+          padding: unit.spouse ? "10px 14px" : "0",
+          borderRadius: "18px",
+        }}
+      >
+        {renderPersonCard(unit.primary)}
+
+        {unit.spouse && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "2px",
+              color: "var(--text-gold)",
+            }}
+            title="Turmush o'rtoqlar (Er-Xotin)"
+          >
+            <div
+              style={{
+                width: "28px",
+                height: "28px",
+                borderRadius: "50%",
+                background: "rgba(212, 175, 55, 0.15)",
+                border: "1px solid var(--gold-500)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Heart size={14} fill="#f59e0b" color="#f59e0b" />
+            </div>
+            <span style={{ fontSize: "9px", fontWeight: 700, color: "var(--text-gold)" }}>ER-XOTIN</span>
+          </div>
+        )}
+
+        {unit.spouse && renderPersonCard(unit.spouse)}
+      </div>
+    );
+  }
+
   function renderPersonCard(person: Person) {
     const isOwner = currentUser?.id === person.created_by || currentUser?.role === "admin";
     const isMale = person.gender === "male";
     const portrait = person.photo_url || (person.photos && person.photos[0]) || null;
     const isCurrentFocus = focusPersonId === person.id;
 
-    // Calculate dynamic kinship title relative to focus person
+    // Dynamic kinship title relative to focus person
     const kinshipLabel = enableKinship
       ? getKinshipTitle(person, focusPerson, people)
       : (person.relationship_title || `${person.generation_level}-bo'g'in`);
