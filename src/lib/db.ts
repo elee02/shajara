@@ -8,7 +8,6 @@ if (!fs.existsSync(dbDirectory)) {
   fs.mkdirSync(dbDirectory, { recursive: true });
 }
 
-// Uploads directory for pictures/portraits
 export const uploadsDirectory = path.join(dbDirectory, "uploads");
 if (!fs.existsSync(uploadsDirectory)) {
   fs.mkdirSync(uploadsDirectory, { recursive: true });
@@ -16,7 +15,6 @@ if (!fs.existsSync(uploadsDirectory)) {
 
 const dbPath = path.join(dbDirectory, "shajara.db");
 
-// Singleton connection for Next.js hot reload
 declare global {
   // eslint-disable-next-line no-var
   var _sqliteDb: Database.Database | undefined;
@@ -81,21 +79,25 @@ function initSchema(db: Database.Database) {
 }
 
 function runMigrations(db: Database.Database) {
-  // Safe column additions if schema was created earlier
   const tableInfo = db.prepare("PRAGMA table_info(people)").all() as { name: string }[];
   const columnNames = new Set(tableInfo.map((c) => c.name));
 
-  if (!columnNames.has("phone")) {
-    db.exec("ALTER TABLE people ADD COLUMN phone TEXT;");
-  }
-  if (!columnNames.has("branch_side")) {
-    db.exec("ALTER TABLE people ADD COLUMN branch_side TEXT DEFAULT 'direct';");
-  }
-  if (!columnNames.has("relationship_title")) {
-    db.exec("ALTER TABLE people ADD COLUMN relationship_title TEXT;");
-  }
-  if (!columnNames.has("photos")) {
-    db.exec("ALTER TABLE people ADD COLUMN photos TEXT;");
+  if (!columnNames.has("phone")) db.exec("ALTER TABLE people ADD COLUMN phone TEXT;");
+  if (!columnNames.has("branch_side")) db.exec("ALTER TABLE people ADD COLUMN branch_side TEXT DEFAULT 'direct';");
+  if (!columnNames.has("relationship_title")) db.exec("ALTER TABLE people ADD COLUMN relationship_title TEXT;");
+  if (!columnNames.has("photos")) db.exec("ALTER TABLE people ADD COLUMN photos TEXT;");
+
+  // Ensure reciprocal relations and mother links in seed data
+  try {
+    db.prepare("UPDATE people SET mother_id = 10 WHERE id IN (6, 11, 12) AND mother_id IS NULL").run();
+    db.prepare("UPDATE people SET spouse_id = 15 WHERE id = 6 AND spouse_id IS NULL").run();
+    db.prepare("UPDATE people SET spouse_id = 6 WHERE id = 15 AND spouse_id IS NULL").run();
+    db.prepare("UPDATE people SET spouse_id = 10 WHERE id = 5 AND spouse_id IS NULL").run();
+    db.prepare("UPDATE people SET spouse_id = 5 WHERE id = 10 AND spouse_id IS NULL").run();
+    db.prepare("UPDATE people SET spouse_id = 14 WHERE id = 13 AND spouse_id IS NULL").run();
+    db.prepare("UPDATE people SET spouse_id = 13 WHERE id = 14 AND spouse_id IS NULL").run();
+  } catch {
+    // Ignore if rows don't exist yet
   }
 }
 
@@ -133,16 +135,16 @@ function seedInitialData(db: Database.Database) {
     // 4. Katta bobo
     insertPerson.run(4, "Shermat", "Qodirov", "Qodirqul o'g'li", "male", 1908, 1982, 0, "Toshkent", "Usta duradgor", "4-ajdodimiz", null, 3, null, null, 4, "father", "Katta bobo", null, null, 1);
     // 3. Ota bobo & Ota buvi
-    insertPerson.run(5, "Rahimjon", "Shermatov", "Shermat o'g'li", "male", 1938, 2012, 0, "Toshkent", "O'qituvchi", "Ota tomon sevimli bobomiz", null, 4, null, null, 3, "father", "Ota bobo", null, null, 2);
+    insertPerson.run(5, "Rahimjon", "Shermatov", "Shermat o'g'li", "male", 1938, 2012, 0, "Toshkent", "O'qituvchi", "Ota tomon sevimli bobomiz", null, 4, null, 10, 3, "father", "Ota bobo", null, null, 2);
     insertPerson.run(10, "Saida", "Shermatova", "Karim qizi", "female", 1942, 2018, 0, "Toshkent", "Shifokor", "Ota tomon buvimiz, mehridaryo ayol", null, null, null, 5, 3, "father", "Ota buvi", null, null, 2);
     // 2. Ota va Amaki, Amma
-    insertPerson.run(6, "Ulug'bek", "Shermatov", "Rahimjon o'g'li", "male", 1968, null, 1, "Toshkent", "Muhandis-energetik", "Otamiz, oila ustuni", "+998 90 123 45 67", 5, 10, null, 2, "father", "Ota", null, null, 2);
+    insertPerson.run(6, "Ulug'bek", "Shermatov", "Rahimjon o'g'li", "male", 1968, null, 1, "Toshkent", "Muhandis-energetik", "Otamiz, oila ustuni", "+998 90 123 45 67", 5, 10, 15, 2, "father", "Ota", null, null, 2);
     insertPerson.run(11, "Anvar", "Shermatov", "Rahimjon o'g'li", "male", 1972, null, 1, "Toshkent", "Tadbirkor", "Katta amakim", "+998 97 765 43 21", 5, 10, null, 2, "father", "Amaki", null, null, 2);
     insertPerson.run(12, "Zulayho", "Rahimova", "Rahimjon qizi", "female", 1975, null, 1, "Toshkent", "Iqtisodchi", "Katta ammam", "+998 93 321 00 11", 5, 10, null, 2, "father", "Amma", null, null, 2);
 
     // --- MATERNAL LINE (Ona tomon) ---
     // 3. Ona bobo & Ona buvi
-    insertPerson.run(13, "Akrom", "Mansurov", "Mansur o'g'li", "male", 1939, 2015, 0, "Farg'ona", "Agronom olim", "Ona tomon bobomiz (Katta ota)", null, null, null, null, 3, "mother", "Ona bobo (Katta ota)", null, null, 2);
+    insertPerson.run(13, "Akrom", "Mansurov", "Mansur o'g'li", "male", 1939, 2015, 0, "Farg'ona", "Agronom olim", "Ona tomon bobomiz (Katta ota)", null, null, null, 14, 3, "mother", "Ona bobo (Katta ota)", null, null, 2);
     insertPerson.run(14, "Muxabbat", "Mansurova", "Salim qizi", "female", 1944, null, 1, "Farg'ona", "Pedagog", "Ona tomon buvimiz (Katta ona)", "+998 90 999 88 77", null, null, 13, 3, "mother", "Ona buvi (Katta ona)", null, null, 2);
     // 2. Ona, Tog'a, Xola
     insertPerson.run(15, "Dildora", "Shermatova (Mansurova)", "Akrom qizi", "female", 1971, null, 1, "Toshkent", "Musiqa fani o'qituvchisi", "Onamiz, mehribon va oqila", "+998 90 234 56 78", 13, 14, 6, 2, "mother", "Ona", null, null, 2);
@@ -154,11 +156,11 @@ function seedInitialData(db: Database.Database) {
     insertPerson.run(8, "Shahnoza", "Shermatova", "Ulug'bek qizi", "female", 2002, null, 1, "Toshkent", "Shifokor-pediatr", "Singlim", "+998 90 666 55 44", 6, 15, null, 1, "direct", "Singil", null, null, 2);
     insertPerson.run(9, "Temur", "Shermatov", "Ulug'bek o'g'li", "male", 2006, null, 1, "Toshkent", "Talaba", "Ukam", "+998 90 777 66 55", 6, 15, null, 1, "direct", "Uka", null, null, 2);
 
-    // Cousins (Amakivachcha & Tog'avachcha)
+    // Cousins
     insertPerson.run(18, "Sardor", "Shermatov", "Anvar o'g'li", "male", 2000, null, 1, "Toshkent", "Muhandis", "Amakim Anvarning o'g'li (Amakivachcha)", "+998 90 888 77 66", 11, null, null, 1, "father", "Amakivachcha", null, null, 2);
     insertPerson.run(19, "Madina", "Mansurova", "Nodir qizi", "female", 2003, null, 1, "Farg'ona", "Tarjimon", "Tog'am Nodirning qizi (Tog'avachcha)", "+998 91 222 33 44", 16, null, null, 1, "mother", "Tog'avachcha", null, null, 2);
 
-    // --- DESCENDANTS (0-bo'g'in Farzandlar va Jiyanlar) ---
+    // Descendants
     insertPerson.run(20, "Azizbek", "Shermatov", "Javohir o'g'li", "male", 2024, null, 1, "Toshkent", null, "Katta o'g'lim", null, 7, null, null, 0, "direct", "O'g'il (Farzand)", null, null, 2);
   }
 }

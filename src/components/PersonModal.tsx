@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { Person, User, UZBEK_GENERATION_LABELS } from "@/lib/types";
+import { getDynamicBranchSide, getKinshipTitle } from "@/lib/kinship";
 import { 
   X, 
   MapPin, 
@@ -15,13 +16,16 @@ import {
   GitCommit,
   ShieldCheck,
   Phone,
-  HeartHandshake
+  HeartHandshake,
+  Compass
 } from "lucide-react";
 
 interface PersonModalProps {
   person: Person & { can_edit?: boolean; created_by_name?: string } | null;
   currentUser: User | null;
   allPeople: Person[];
+  focusPerson?: Person | null;
+  onSetFocus?: (personId: number) => void;
   onClose: () => void;
   onEdit: (person: Person) => void;
   onDelete: (personId: number) => void;
@@ -33,6 +37,8 @@ export const PersonModal: React.FC<PersonModalProps> = ({
   person,
   currentUser,
   allPeople,
+  focusPerson = null,
+  onSetFocus,
   onClose,
   onEdit,
   onDelete,
@@ -53,6 +59,9 @@ export const PersonModal: React.FC<PersonModalProps> = ({
 
   const mainPhoto = selectedPhoto || person.photo_url || (person.photos && person.photos[0]) || null;
   const photosList = person.photos || (person.photo_url ? [person.photo_url] : []);
+
+  const dynSide = getDynamicBranchSide(person, focusPerson, allPeople);
+  const dynTitle = getKinshipTitle(person, focusPerson, allPeople);
 
   const branchSideLabels: Record<string, { label: string; color: string; bg: string }> = {
     father: { label: "Ota tomoni (Paternal)", color: "#38bdf8", bg: "rgba(56, 189, 248, 0.15)" },

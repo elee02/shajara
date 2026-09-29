@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { Person, User, UZBEK_GENERATION_LABELS, BranchSide } from "@/lib/types";
-import { getKinshipTitle } from "@/lib/kinship";
+import { getKinshipTitle, getDynamicBranchSide } from "@/lib/kinship";
 import { 
   ZoomIn, 
   ZoomOut, 
@@ -24,6 +24,8 @@ import {
 interface TreeViewProps {
   people: (Person & { can_edit?: boolean; created_by_name?: string })[];
   currentUser: User | null;
+  focusPersonId?: number | null;
+  onFocusPersonChange?: (id: number) => void;
   onSelectPerson: (person: Person) => void;
   onAddRelated: (parentId: number, relationType: "child" | "father") => void;
   onEditPerson: (person: Person) => void;
@@ -42,12 +44,14 @@ interface FamilyUnit {
   id: string;
   primary: Person;
   spouse?: Person;
-  branch: "father" | "central" | "mother";
+  branch: BranchSide;
 }
 
 export const TreeView: React.FC<TreeViewProps> = ({
   people,
   currentUser,
+  focusPersonId: propFocusId,
+  onFocusPersonChange,
   onSelectPerson,
   onAddRelated,
   onEditPerson,
@@ -60,7 +64,19 @@ export const TreeView: React.FC<TreeViewProps> = ({
 
   // Relative-to-me controls
   const [enableKinship, setEnableKinship] = useState<boolean>(true);
-  const [focusPersonId, setFocusPersonId] = useState<number | null>(null);
+  const [internalFocusId, setInternalFocusId] = useState<number | null>(null);
+
+  const focusPersonId = propFocusId !== undefined && propFocusId !== null ? propFocusId : internalFocusId;
+
+  const setFocusPersonId = useCallback(
+    (id: number) => {
+      setInternalFocusId(id);
+      if (onFocusPersonChange) {
+        onFocusPersonChange(id);
+      }
+    },
+    [onFocusPersonChange]
+  );
 
   // Computed connector lines
   const [lines, setLines] = useState<ConnectorLine[]>([]);
@@ -82,40 +98,43 @@ export const TreeView: React.FC<TreeViewProps> = ({
     return people.find((p) => p.id === focusPersonId) || null;
   }, [people, focusPersonId]);
 
-  // Filter people by branch side if chosen
+  // Compute dynamic branch side relative to current focus person
+  const dynamicSideMap = useMemo(() => {
+    const map = new Map<number, BranchSide>();
+    people.forEach((p) => {
+      map.set(p.id, getDynamicBranchSide(p, focusPerson, people));
+    });
+    return map;
+  }, [people, focusPerson]);
+
+  // Filter people by dynamic branch side if chosen
   const filteredPeople = useMemo(() => {
     if (activeSide === "all") return people;
-    return people.filter((p) => p.branch_side === activeSide);
-  }, [people, activeSide]);
+    return people.filter((p) => dynamicSideMap.get(p.id) === activeSide);
+  }, [people, activeSide, dynamicSideMap]);
+
+  // Dynamic branch counts relative to focus person
+  const dynamicSideCounts = useMemo(() => {
+    let father = 0;
+    let mother = 0;
+    let direct = 0;
+    let in_laws = 0;
+    people.forEach((p) => {
+      const s = dynamicSideMap.get(p.id) || "direct";
+      if (s === "father") father++;
+      else if (s === "mother") mother++;
+      else if (s === "direct") direct++;
+      else if (s === "in_laws") in_laws++;
+    });
+    return { father, mother, direct, in_laws };
+  }, [people, dynamicSideMap]);
 
   // Distinct generation levels present in dataset (e.g. 7 down to 0)
   const uniqueGenLevels = useMemo(() => {
     return Array.from(new Set(people.map((p) => p.generation_level))).sort((a, b) => b - a);
   }, [people]);
 
-  // Helper to classify a unit into Paternal, Central Direct, or Maternal
-  const classifyUnit = useCallback((primary: Person, spouse?: Person): "father" | "central" | "mother" => {
-    // If unit is the marital bridge (Ulug'bek & Dildora)
-    if (
-      (primary.id === 6 && spouse?.id === 15) ||
-      (primary.id === 15 && spouse?.id === 6)
-    ) {
-      return "central";
-    }
-    // Direct core line (Javohir, Shahnoza, Temur, Azizbek)
-    if (primary.branch_side === "direct" || spouse?.branch_side === "direct") {
-      return "central";
-    }
-    if (primary.branch_side === "mother" || spouse?.branch_side === "mother") {
-      return "mother";
-    }
-    if (primary.branch_side === "father" || spouse?.branch_side === "father") {
-      return "father";
-    }
-    return "central";
-  }, []);
-
-  // Group each generation into 3 clearly organized lineage lanes
+  // Group each generation into 3 clearly organized lineage lanes based on DYNAMIC branch side
   const organizedGenerations = useMemo(() => {
     return uniqueGenLevels.map((gen) => {
       const genPeople = filteredPeople.filter((p) => p.generation_level === gen);
@@ -139,18 +158,40 @@ export const TreeView: React.FC<TreeViewProps> = ({
           const orderedPrimary = person.gender === "female" && spouse.gender === "male" ? spouse : person;
           const orderedSpouse = person.gender === "female" && spouse.gender === "male" ? person : spouse;
 
+          const side1 = dynamicSideMap.get(orderedPrimary.id) || "direct";
+          const side2 = dynamicSideMap.get(orderedSpouse.id) || "direct";
+          let unitBranch: BranchSide = "direct";
+          if (side1 === "father" && side2 === "father") {
+            unitBranch = "father";
+          } else if (side1 === "mother" && side2 === "mother") {
+            unitBranch = "mother";
+          } else if (side1 === "in_laws" && side2 === "in_laws") {
+            unitBranch = "in_laws";
+          } else if ((side1 === "father" && side2 === "mother") || (side1 === "mother" && side2 === "father")) {
+            // Direct parents of focus person
+            unitBranch = "direct";
+          } else if (side1 === "direct" || side2 === "direct") {
+            unitBranch = "direct";
+          } else if (side1 === "father" || side2 === "father") {
+            unitBranch = "father";
+          } else if (side1 === "mother" || side2 === "mother") {
+            unitBranch = "mother";
+          } else {
+            unitBranch = "in_laws";
+          }
+
           allUnits.push({
             id: `couple-${orderedPrimary.id}-${orderedSpouse.id}`,
             primary: orderedPrimary,
             spouse: orderedSpouse,
-            branch: classifyUnit(orderedPrimary, orderedSpouse),
+            branch: unitBranch,
           });
         } else {
           visited.add(person.id);
           allUnits.push({
             id: `single-${person.id}`,
             primary: person,
-            branch: classifyUnit(person),
+            branch: dynamicSideMap.get(person.id) || "direct",
           });
         }
       });
@@ -159,12 +200,13 @@ export const TreeView: React.FC<TreeViewProps> = ({
         level: gen,
         label: UZBEK_GENERATION_LABELS[gen] || { title_uz: `${gen}-bo'g'in`, desc: "" },
         fatherLane: allUnits.filter((u) => u.branch === "father"),
-        centralLane: allUnits.filter((u) => u.branch === "central"),
+        centralLane: allUnits.filter((u) => u.branch === "direct"),
         motherLane: allUnits.filter((u) => u.branch === "mother"),
+        inLawsLane: allUnits.filter((u) => u.branch === "in_laws"),
         totalCount: allUnits.length,
       };
     });
-  }, [uniqueGenLevels, filteredPeople, people, classifyUnit]);
+  }, [uniqueGenLevels, filteredPeople, people, dynamicSideMap]);
 
   // Recompute SVG connector lines based on DOM positions
   const updateConnectorLines = useCallback(() => {
@@ -231,7 +273,6 @@ export const TreeView: React.FC<TreeViewProps> = ({
       let parentOriginY: number | null = null;
 
       if (fatherPos && motherPos) {
-        // Line starts midway between father and mother
         parentOriginX = (fatherPos.bottomX + motherPos.bottomX) / 2;
         parentOriginY = Math.max(fatherPos.bottomY, motherPos.bottomY);
       } else if (fatherPos) {
@@ -291,6 +332,13 @@ export const TreeView: React.FC<TreeViewProps> = ({
   const resetZoom = () => {
     setScale(0.85);
     setPan({ x: 0, y: 10 });
+  };
+
+  const sideBadgeStyles: Record<BranchSide, { label: string; color: string; bg: string }> = {
+    father: { label: "Ota tomoni", color: "#38bdf8", bg: "rgba(56, 189, 248, 0.12)" },
+    mother: { label: "Ona tomoni", color: "#f472b6", bg: "rgba(244, 114, 182, 0.12)" },
+    direct: { label: "O'z oilasi", color: "#34d399", bg: "rgba(52, 211, 153, 0.12)" },
+    in_laws: { label: "Qudachilik", color: "#c084fc", bg: "rgba(192, 132, 252, 0.12)" },
   };
 
   return (
@@ -433,7 +481,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
               >
                 {people.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {p.first_name} {p.last_name} ({p.relationship_title || `${p.generation_level}-bo'g'in`})
+                    {p.first_name} {p.last_name} ({p.birth_year || "?"})
                   </option>
                 ))}
               </select>
@@ -441,7 +489,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
           )}
         </div>
 
-        {/* Row 2: Branch Filter */}
+        {/* Row 2: Branch Filter (Dynamic relative to focus) */}
         <div
           style={{
             display: "flex",
@@ -457,7 +505,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
           }}
         >
           <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--text-gold)", display: "flex", alignItems: "center", gap: "4px" }}>
-            <Users size={13} /> Ko&apos;rinish:
+            <Users size={13} /> Tarmoq ({focusPerson?.first_name}ga nisbatan):
           </span>
           <button
             onClick={() => setActiveSide("all")}
@@ -470,7 +518,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
               borderRadius: "5px",
             }}
           >
-            Barcha shoxobchalar ({people.length})
+            Barchasi ({people.length})
           </button>
           <button
             onClick={() => setActiveSide("father")}
@@ -484,7 +532,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
               borderRadius: "5px",
             }}
           >
-            👨‍🦳 Ota tomoni
+            👨‍🦳 Ota tomoni ({dynamicSideCounts.father})
           </button>
           <button
             onClick={() => setActiveSide("mother")}
@@ -498,7 +546,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
               borderRadius: "5px",
             }}
           >
-            👩‍🦳 Ona tomoni
+            👩‍🦳 Ona tomoni ({dynamicSideCounts.mother})
           </button>
           <button
             onClick={() => setActiveSide("direct")}
@@ -512,12 +560,28 @@ export const TreeView: React.FC<TreeViewProps> = ({
               borderRadius: "5px",
             }}
           >
-            🌱 O&apos;z oilasi
+            🌱 O&apos;z oilasi ({dynamicSideCounts.direct})
           </button>
+          {dynamicSideCounts.in_laws > 0 && (
+            <button
+              onClick={() => setActiveSide("in_laws")}
+              className="btn btn-sm"
+              style={{
+                background: activeSide === "in_laws" ? "rgba(192, 132, 252, 0.25)" : "transparent",
+                color: activeSide === "in_laws" ? "#c084fc" : "var(--text-muted)",
+                border: activeSide === "in_laws" ? "1px solid #c084fc" : "none",
+                padding: "3px 8px",
+                fontSize: "11px",
+                borderRadius: "5px",
+              }}
+            >
+              🤝 Qudachilik ({dynamicSideCounts.in_laws})
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Pannable Canvas Container */}
+      {/* Canvas Container */}
       <div
         ref={canvasRef}
         id="tree-diagram-export-target"
@@ -608,13 +672,14 @@ export const TreeView: React.FC<TreeViewProps> = ({
           })}
         </svg>
 
-        {/* Clean Lineage-Lane Layout per Generation */}
+        {/* Dynamic Lineage-Lane Layout per Generation */}
         {organizedGenerations.map((genTier) => {
           if (genTier.totalCount === 0) return null;
 
           const hasMaternal = genTier.motherLane.length > 0;
           const hasPaternal = genTier.fatherLane.length > 0;
           const hasCentral = genTier.centralLane.length > 0;
+          const hasInLaws = genTier.inLawsLane.length > 0;
 
           return (
             <div
@@ -656,37 +721,38 @@ export const TreeView: React.FC<TreeViewProps> = ({
                 </span>
               </div>
 
-              {/* 3 Clear Branch Columns (Lanes) */}
+              {/* Dynamic Lineage Lanes dynamically positioned relative to focus */}
               <div
                 style={{
-                  display: "grid",
-                  gridTemplateColumns: hasMaternal && hasPaternal ? "1fr auto 1fr" : "1fr",
-                  gap: "50px",
+                  display: "flex",
+                  justifyContent: "center",
+                  alignItems: "flex-start",
+                  gap: "40px",
                   width: "100%",
                   maxWidth: "1850px",
-                  alignItems: "start",
+                  flexWrap: "wrap",
                 }}
               >
-                {/* 1. Left Lane: Paternal Branch (Ota Tomoni) */}
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: hasMaternal ? "flex-end" : "center",
-                    gap: "16px",
-                  }}
-                >
-                  {hasPaternal && genTier.level <= 3 && (
+                {/* 1. Paternal Branch (Ota Tomoni) */}
+                {hasPaternal && (
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      gap: "16px",
+                    }}
+                  >
                     <span style={{ fontSize: "11px", fontWeight: 700, color: "#38bdf8", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                      👨‍🦳 Ota tomoni
+                      👨‍🦳 Ota tomoni ({focusPerson?.first_name}ga)
                     </span>
-                  )}
-                  <div style={{ display: "flex", flexWrap: "wrap", justifyContent: hasMaternal ? "flex-end" : "center", gap: "28px" }}>
-                    {genTier.fatherLane.map((unit) => renderFamilyUnit(unit))}
+                    <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "28px" }}>
+                      {genTier.fatherLane.map((unit) => renderFamilyUnit(unit))}
+                    </div>
                   </div>
-                </div>
+                )}
 
-                {/* 2. Middle Lane: Core Family (O'z oilasi / Parents couple) */}
+                {/* 2. Middle Lane: Core Family (O'z oilasi & Ota-onasi) */}
                 {hasCentral && (
                   <div
                     style={{
@@ -697,32 +763,49 @@ export const TreeView: React.FC<TreeViewProps> = ({
                       padding: "0 10px",
                     }}
                   >
-                    {genTier.level <= 2 && (
-                      <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--text-gold)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                        🏛️ Markaziy oila
-                      </span>
-                    )}
+                    <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--text-gold)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                      🏛️ Asosiy shajara (O&apos;z oilasi &amp; Ota-onasi)
+                    </span>
                     <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "28px" }}>
                       {genTier.centralLane.map((unit) => renderFamilyUnit(unit))}
                     </div>
                   </div>
                 )}
 
-                {/* 3. Right Lane: Maternal Branch (Ona Tomoni) */}
+                {/* 3. Maternal Branch (Ona Tomoni) */}
                 {hasMaternal && (
                   <div
                     style={{
                       display: "flex",
                       flexDirection: "column",
-                      alignItems: "flex-start",
+                      alignItems: "center",
                       gap: "16px",
                     }}
                   >
                     <span style={{ fontSize: "11px", fontWeight: 700, color: "#f472b6", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                      👩‍🦳 Ona tomoni
+                      👩‍🦳 Ona tomoni ({focusPerson?.first_name}ga)
                     </span>
-                    <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-start", gap: "28px" }}>
+                    <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "28px" }}>
                       {genTier.motherLane.map((unit) => renderFamilyUnit(unit))}
+                    </div>
+                  </div>
+                )}
+
+                {/* 4. In-Laws Branch (Qudachilik) */}
+                {hasInLaws && (
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      gap: "16px",
+                    }}
+                  >
+                    <span style={{ fontSize: "11px", fontWeight: 700, color: "#c084fc", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                      🤝 Qudachilik ({focusPerson?.first_name}ga)
+                    </span>
+                    <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "28px" }}>
+                      {genTier.inLawsLane.map((unit) => renderFamilyUnit(unit))}
                     </div>
                   </div>
                 )}
@@ -797,6 +880,10 @@ export const TreeView: React.FC<TreeViewProps> = ({
       ? getKinshipTitle(person, focusPerson, people)
       : (person.relationship_title || `${person.generation_level}-bo'g'in`);
 
+    // Dynamic branch side relative to focus person
+    const dynSide = dynamicSideMap.get(person.id) || "direct";
+    const sideInfo = sideBadgeStyles[dynSide] || sideBadgeStyles.direct;
+
     return (
       <div
         key={person.id}
@@ -827,7 +914,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
           e.currentTarget.style.borderColor = isCurrentFocus ? "var(--gold-500)" : "var(--border-subtle)";
         }}
       >
-        {/* Top Header: Portrait + Kinship Badge */}
+        {/* Top Header: Portrait + Kinship & Dynamic Branch Badges */}
         <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
           {/* Portrait Thumbnail */}
           <div
@@ -860,6 +947,23 @@ export const TreeView: React.FC<TreeViewProps> = ({
           </div>
 
           <div style={{ flex: 1, minWidth: 0 }}>
+            {/* Dynamic Branch Side Tag */}
+            <div style={{ display: "flex", alignItems: "center", gap: "4px", marginBottom: "3px" }}>
+              <span
+                style={{
+                  fontSize: "9px",
+                  fontWeight: 800,
+                  textTransform: "uppercase",
+                  padding: "1px 6px",
+                  borderRadius: "4px",
+                  background: sideInfo.bg,
+                  color: sideInfo.color,
+                }}
+              >
+                {sideInfo.label}
+              </span>
+            </div>
+
             {/* Kinship or Generation Title */}
             <div
               style={{
@@ -950,7 +1054,6 @@ export const TreeView: React.FC<TreeViewProps> = ({
             fontSize: "11px",
           }}
         >
-          {/* Target button to set relative-to this person */}
           <button
             onClick={(e) => {
               e.stopPropagation();

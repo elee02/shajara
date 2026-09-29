@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { Person, User, BranchSide } from "@/lib/types";
+import { getDynamicBranchSide } from "@/lib/kinship";
 import { Navbar } from "@/components/Navbar";
 import { TreeView } from "@/components/TreeView";
 import { ListView } from "@/components/ListView";
@@ -175,10 +176,45 @@ export default function Home() {
     }
   };
 
-  // Branch stats
-  const fatherSideCount = people.filter((p) => p.branch_side === "father").length;
-  const motherSideCount = people.filter((p) => p.branch_side === "mother").length;
-  const directSideCount = people.filter((p) => p.branch_side === "direct").length;
+  // Global focus person state
+  const [focusPersonId, setFocusPersonId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (focusPersonId === null && people.length > 0) {
+      const defaultFocus = people.find((p) => p.relationship_title === "O'zi" || p.id === 7) || people[0];
+      if (defaultFocus) setFocusPersonId(defaultFocus.id);
+    }
+  }, [people, focusPersonId]);
+
+  const focusPerson = useMemo(() => {
+    return people.find((p) => p.id === focusPersonId) || null;
+  }, [people, focusPersonId]);
+
+  // Dynamically compute branch sides relative to active focus person
+  const dynamicSideMap = useMemo(() => {
+    const map = new Map<number, BranchSide>();
+    people.forEach((p) => {
+      map.set(p.id, getDynamicBranchSide(p, focusPerson, people));
+    });
+    return map;
+  }, [people, focusPerson]);
+
+  const fatherSideCount = useMemo(() => {
+    return people.filter((p) => dynamicSideMap.get(p.id) === "father").length;
+  }, [people, dynamicSideMap]);
+
+  const motherSideCount = useMemo(() => {
+    return people.filter((p) => dynamicSideMap.get(p.id) === "mother").length;
+  }, [people, dynamicSideMap]);
+
+  const directSideCount = useMemo(() => {
+    return people.filter((p) => dynamicSideMap.get(p.id) === "direct").length;
+  }, [people, dynamicSideMap]);
+
+  const inLawsSideCount = useMemo(() => {
+    return people.filter((p) => dynamicSideMap.get(p.id) === "in_laws").length;
+  }, [people, dynamicSideMap]);
+
   const myEntriesCount = currentUser ? people.filter((p) => p.created_by === currentUser.id).length : 0;
 
   return (
@@ -260,6 +296,13 @@ export default function Home() {
             <span>O&apos;z avlodlari / Jigarlar: <strong style={{ color: "#34d399" }}>{directSideCount}</strong></span>
           </div>
 
+          {inLawsSideCount > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--text-secondary)" }}>
+              <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#c084fc" }} />
+              <span>Qudachilik: <strong style={{ color: "#c084fc" }}>{inLawsSideCount}</strong></span>
+            </div>
+          )}
+
           {currentUser && (
             <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--text-secondary)" }}>
               <ShieldCheck size={16} color="var(--text-gold)" />
@@ -268,10 +311,37 @@ export default function Home() {
           )}
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--text-muted)", fontSize: "12px" }}>
-          <Info size={14} />
-          <span>Suratlar va aloqalar bilan barcha qarindoshlar doimo yodingizda saqlanadi.</span>
-        </div>
+        {/* Focus Person Selector in Top Header */}
+        {focusPerson && (
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <span style={{ fontSize: "12px", color: "var(--text-gold)", fontWeight: 700, display: "flex", alignItems: "center", gap: "4px" }}>
+              🎯 Qiyosiy nuqta:
+            </span>
+            <select
+              id="global-focus-person-select"
+              value={focusPersonId || ""}
+              onChange={(e) => setFocusPersonId(Number(e.target.value))}
+              className="form-select"
+              style={{
+                padding: "4px 10px",
+                fontSize: "12px",
+                height: "auto",
+                background: "var(--bg-tertiary)",
+                border: "1px solid var(--gold-500)",
+                color: "var(--text-primary)",
+                borderRadius: "var(--radius-sm)",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              {people.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.first_name} {p.last_name} ({p.birth_year || "?"})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Main Content Area */}
@@ -285,6 +355,8 @@ export default function Home() {
         <TreeView
           people={people}
           currentUser={currentUser}
+          focusPersonId={focusPersonId}
+          onFocusPersonChange={setFocusPersonId}
           onSelectPerson={(p) => setSelectedPerson(p)}
           onAddRelated={(parentId, rel) => handleOpenAddModal(parentId, rel)}
           onEditPerson={handleEditPerson}
@@ -293,6 +365,8 @@ export default function Home() {
         <ListView
           people={people}
           currentUser={currentUser}
+          focusPerson={focusPerson}
+          onFocusPersonChange={setFocusPersonId}
           onSelectPerson={(p) => setSelectedPerson(p)}
           onEditPerson={handleEditPerson}
           onDeletePerson={handleDeletePerson}
@@ -305,6 +379,8 @@ export default function Home() {
         person={selectedPerson}
         currentUser={currentUser}
         allPeople={people}
+        focusPerson={focusPerson}
+        onSetFocus={(id) => setFocusPersonId(id)}
         onClose={() => setSelectedPerson(null)}
         onEdit={handleEditPerson}
         onDelete={handleDeletePerson}

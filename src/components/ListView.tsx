@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo } from "react";
 import { Person, User, BranchSide, UZBEK_GENERATION_LABELS } from "@/lib/types";
+import { getDynamicBranchSide, getKinshipTitle } from "@/lib/kinship";
 import { 
   Search, 
   Filter, 
@@ -13,12 +14,15 @@ import {
   MapPin, 
   Briefcase,
   Phone,
-  Users
+  Users,
+  Compass
 } from "lucide-react";
 
 interface ListViewProps {
   people: (Person & { can_edit?: boolean; created_by_name?: string })[];
   currentUser: User | null;
+  focusPerson?: Person | null;
+  onFocusPersonChange?: (personId: number) => void;
   onSelectPerson: (person: Person) => void;
   onEditPerson: (person: Person) => void;
   onDeletePerson: (personId: number) => void;
@@ -28,6 +32,8 @@ interface ListViewProps {
 export const ListView: React.FC<ListViewProps> = ({
   people,
   currentUser,
+  focusPerson = null,
+  onFocusPersonChange,
   onSelectPerson,
   onEditPerson,
   onDeletePerson,
@@ -36,6 +42,30 @@ export const ListView: React.FC<ListViewProps> = ({
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedSide, setSelectedSide] = useState<"all" | BranchSide>("all");
   const [onlyMine, setOnlyMine] = useState(false);
+
+  // Dynamic branch sides relative to focus person
+  const dynamicSideMap = useMemo(() => {
+    const map = new Map<number, BranchSide>();
+    people.forEach((p) => {
+      map.set(p.id, getDynamicBranchSide(p, focusPerson, people));
+    });
+    return map;
+  }, [people, focusPerson]);
+
+  const dynamicCounts = useMemo(() => {
+    let father = 0;
+    let mother = 0;
+    let direct = 0;
+    let in_laws = 0;
+    people.forEach((p) => {
+      const s = dynamicSideMap.get(p.id) || "direct";
+      if (s === "father") father++;
+      else if (s === "mother") mother++;
+      else if (s === "direct") direct++;
+      else if (s === "in_laws") in_laws++;
+    });
+    return { father, mother, direct, in_laws };
+  }, [people, dynamicSideMap]);
 
   const filteredPeople = useMemo(() => {
     return people.filter((p) => {
@@ -51,7 +81,7 @@ export const ListView: React.FC<ListViewProps> = ({
 
       if (query && !match) return false;
 
-      if (selectedSide !== "all" && p.branch_side !== selectedSide) {
+      if (selectedSide !== "all" && (dynamicSideMap.get(p.id) || "direct") !== selectedSide) {
         return false;
       }
 
@@ -61,7 +91,7 @@ export const ListView: React.FC<ListViewProps> = ({
 
       return true;
     });
-  }, [people, searchQuery, selectedSide, onlyMine, currentUser]);
+  }, [people, searchQuery, selectedSide, onlyMine, currentUser, dynamicSideMap]);
 
   const sideLabels: Record<BranchSide, { label: string; color: string; bg: string }> = {
     father: { label: "Ota tomoni", color: "#38bdf8", bg: "rgba(56, 189, 248, 0.12)" },
@@ -115,15 +145,15 @@ export const ListView: React.FC<ListViewProps> = ({
             <select
               id="select-filter-side"
               className="form-select"
-              style={{ width: "auto", minWidth: "170px" }}
+              style={{ width: "auto", minWidth: "190px" }}
               value={selectedSide}
               onChange={(e) => setSelectedSide(e.target.value as "all" | BranchSide)}
             >
-              <option value="all">Barcha shoxobchalar</option>
-              <option value="father">Ota tomoni (Paternal)</option>
-              <option value="mother">Ona tomoni (Maternal)</option>
-              <option value="direct">O&apos;z avlodlari / Jigarlar</option>
-              <option value="in_laws">Qudachilik</option>
+              <option value="all">Barcha shoxobchalar ({people.length})</option>
+              <option value="father">👨‍🦳 Ota tomoni ({dynamicCounts.father})</option>
+              <option value="mother">👩‍🦳 Ona tomoni ({dynamicCounts.mother})</option>
+              <option value="direct">🌱 O&apos;z oilasi ({dynamicCounts.direct})</option>
+              <option value="in_laws">🤝 Qudachilik ({dynamicCounts.in_laws})</option>
             </select>
           </div>
 
@@ -216,7 +246,9 @@ export const ListView: React.FC<ListViewProps> = ({
             const isOwner = currentUser?.id === person.created_by || currentUser?.role === "admin";
             const isMale = person.gender === "male";
             const portrait = person.photo_url || (person.photos && person.photos[0]) || null;
-            const sideInfo = sideLabels[person.branch_side] || sideLabels.direct;
+            const dynSide = dynamicSideMap.get(person.id) || "direct";
+            const sideInfo = sideLabels[dynSide] || sideLabels.direct;
+            const kinshipTitle = getKinshipTitle(person, focusPerson, people);
 
             return (
               <div
