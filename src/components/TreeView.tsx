@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { Person, User, UZBEK_GENERATION_LABELS, BranchSide } from "@/lib/types";
+import { getKinshipTitle } from "@/lib/kinship";
 import { 
   ZoomIn, 
   ZoomOut, 
@@ -11,10 +12,13 @@ import {
   Edit3, 
   Lock, 
   MapPin, 
-  Briefcase, 
   Phone,
   Sparkles,
-  Users
+  Users,
+  Heart,
+  Target,
+  ToggleLeft,
+  ToggleRight
 } from "lucide-react";
 
 interface TreeViewProps {
@@ -25,6 +29,15 @@ interface TreeViewProps {
   onEditPerson: (person: Person) => void;
 }
 
+interface ConnectorLine {
+  id: string;
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
+  type: "parent-child" | "spouse";
+}
+
 export const TreeView: React.FC<TreeViewProps> = ({
   people,
   currentUser,
@@ -32,29 +45,200 @@ export const TreeView: React.FC<TreeViewProps> = ({
   onAddRelated,
   onEditPerson,
 }) => {
-  const [scale, setScale] = useState<number>(1);
-  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [scale, setScale] = useState<number>(0.9);
+  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 10 });
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [activeSide, setActiveSide] = useState<"all" | BranchSide>("all");
-  const [highlightGen, setHighlightGen] = useState<number | null>(null);
+
+  // Relative-to-me controls
+  const [enableKinship, setEnableKinship] = useState<boolean>(true);
+  const [focusPersonId, setFocusPersonId] = useState<number | null>(null);
+
+  // Computed connector lines
+  const [lines, setLines] = useState<ConnectorLine[]>([]);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLDivElement>(null);
 
-  // Filter by side if selected
-  const filteredPeople = activeSide === "all" ? people : people.filter((p) => p.branch_side === activeSide);
+  // Initialize focus person: default to current user's entry (or person 7 Javohir)
+  useEffect(() => {
+    if (focusPersonId === null && people.length > 0) {
+      // Find person matching user or fallback to Javohir (id 7) or first person
+      const selfPerson = people.find((p) => p.relationship_title === "O'zi" || p.id === 7) || people[0];
+      if (selfPerson) {
+        setFocusPersonId(selfPerson.id);
+      }
+    }
+  }, [people, focusPersonId]);
 
-  // Collect all generation levels present in dataset, sorted descending (e.g. 7 down to -3)
-  const uniqueGenLevels = Array.from(new Set(people.map((p) => p.generation_level))).sort((a, b) => b - a);
+  const focusPerson = useMemo(() => {
+    return people.find((p) => p.id === focusPersonId) || null;
+  }, [people, focusPersonId]);
 
-  const peopleByGen = uniqueGenLevels.map((gen) => ({
-    level: gen,
-    label: UZBEK_GENERATION_LABELS[gen] || { title_uz: `${gen}-bo'g'in`, desc: "" },
-    members: filteredPeople.filter((p) => p.generation_level === gen),
-  }));
+  // Filter people by branch side if chosen
+  const filteredPeople = useMemo(() => {
+    if (activeSide === "all") return people;
+    return people.filter((p) => p.branch_side === activeSide);
+  }, [people, activeSide]);
 
+  // Group into generation levels
+  const uniqueGenLevels = useMemo(() => {
+    return Array.from(new Set(people.map((p) => p.generation_level))).sort((a, b) => b - a);
+  }, [people]);
+
+  // Group each generation's people into Family Units (Couples & Individuals)
+  const familyUnitsByGen = useMemo(() => {
+    return uniqueGenLevels.map((gen) => {
+      const genPeople = filteredPeople.filter((p) => p.generation_level === gen);
+      const visited = new Set<number>();
+      const units: { id: string; primary: Person; spouse?: Person }[] = [];
+
+      genPeople.forEach((person) => {
+        if (visited.has(person.id)) return;
+
+        // Check if spouse exists in same generation or tree
+        let spouse: Person | undefined = undefined;
+        if (person.spouse_id) {
+          spouse = genPeople.find((p) => p.id === person.spouse_id);
+          if (!spouse) {
+            spouse = people.find((p) => p.id === person.spouse_id);
+          }
+        } else {
+          // Check reverse
+          spouse = genPeople.find((p) => p.spouse_id === person.id);
+        }
+
+        if (spouse) {
+          visited.add(person.id);
+          visited.add(spouse.id);
+          // Put male first if applicable
+          if (person.gender === "female" && spouse.gender === "male") {
+            units.push({ id: `couple-${spouse.id}-${person.id}`, primary: spouse, spouse: person });
+          } else {
+            units.push({ id: `couple-${person.id}-${spouse.id}`, primary: person, spouse });
+          }
+        } else {
+          visited.add(person.id);
+          units.push({ id: `single-${person.id}`, primary: person });
+        }
+      });
+
+      return {
+        level: gen,
+        label: UZBEK_GENERATION_LABELS[gen] || { title_uz: `${gen}-bo'g'in`, desc: "" },
+        units,
+      };
+    });
+  }, [uniqueGenLevels, filteredPeople, people]);
+
+  // Recompute SVG connector lines based on DOM positions
+  const updateConnectorLines = useCallback(() => {
+    if (!canvasRef.current) return;
+
+    const canvasRect = canvasRef.current.getBoundingClientRect();
+    const newLines: ConnectorLine[] = [];
+
+    // Map card positions
+    const cardPositions = new Map<number, { topX: number; topY: number; bottomX: number; bottomY: number; rightX: number; leftX: number; midY: number }>();
+
+    people.forEach((person) => {
+      const el = document.getElementById(`person-card-${person.id}`);
+      if (!el) return;
+
+      const rect = el.getBoundingClientRect();
+      const left = (rect.left - canvasRect.left) / scale;
+      const top = (rect.top - canvasRect.top) / scale;
+      const width = rect.width / scale;
+      const height = rect.height / scale;
+
+      cardPositions.set(person.id, {
+        topX: left + width / 2,
+        topY: top,
+        bottomX: left + width / 2,
+        bottomY: top + height,
+        leftX: left,
+        rightX: left + width,
+        midY: top + height / 2,
+      });
+    });
+
+    // 1. Spouses horizontal links
+    const visitedSpouses = new Set<string>();
+    people.forEach((p) => {
+      if (p.spouse_id && cardPositions.has(p.id) && cardPositions.has(p.spouse_id)) {
+        const pairKey = [p.id, p.spouse_id].sort().join("-");
+        if (!visitedSpouses.has(pairKey)) {
+          visitedSpouses.add(pairKey);
+          const pos1 = cardPositions.get(p.id)!;
+          const pos2 = cardPositions.get(p.spouse_id)!;
+
+          const isLeft = pos1.rightX < pos2.leftX;
+          newLines.push({
+            id: `spouse-${pairKey}`,
+            fromX: isLeft ? pos1.rightX : pos1.leftX,
+            fromY: pos1.midY,
+            toX: isLeft ? pos2.leftX : pos2.rightX,
+            toY: pos2.midY,
+            type: "spouse",
+          });
+        }
+      }
+    });
+
+    // 2. Parent-to-Child links
+    people.forEach((child) => {
+      const childPos = cardPositions.get(child.id);
+      if (!childPos) return;
+
+      const fatherPos = child.father_id ? cardPositions.get(child.father_id) : null;
+      const motherPos = child.mother_id ? cardPositions.get(child.mother_id) : null;
+
+      let parentOriginX: number | null = null;
+      let parentOriginY: number | null = null;
+
+      if (fatherPos && motherPos) {
+        // Line starts midway between father and mother
+        parentOriginX = (fatherPos.bottomX + motherPos.bottomX) / 2;
+        parentOriginY = Math.max(fatherPos.bottomY, motherPos.bottomY);
+      } else if (fatherPos) {
+        parentOriginX = fatherPos.bottomX;
+        parentOriginY = fatherPos.bottomY;
+      } else if (motherPos) {
+        parentOriginX = motherPos.bottomX;
+        parentOriginY = motherPos.bottomY;
+      }
+
+      if (parentOriginX !== null && parentOriginY !== null) {
+        newLines.push({
+          id: `child-${child.id}-parent`,
+          fromX: parentOriginX,
+          fromY: parentOriginY,
+          toX: childPos.topX,
+          toY: childPos.topY,
+          type: "parent-child",
+        });
+      }
+    });
+
+    setLines(newLines);
+  }, [people, scale]);
+
+  // Recalculate positions after DOM renders
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      updateConnectorLines();
+    }, 150);
+    window.addEventListener("resize", updateConnectorLines);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("resize", updateConnectorLines);
+    };
+  }, [updateConnectorLines, familyUnitsByGen, activeSide]);
+
+  // Mouse pan handlers
   const handleMouseDown = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest(".person-node-card") || (e.target as HTMLElement).closest("button")) {
+    if ((e.target as HTMLElement).closest(".person-node-card") || (e.target as HTMLElement).closest("button") || (e.target as HTMLElement).closest("select")) {
       return;
     }
     setIsDragging(true);
@@ -74,15 +258,8 @@ export const TreeView: React.FC<TreeViewProps> = ({
   };
 
   const resetZoom = () => {
-    setScale(1);
-    setPan({ x: 0, y: 0 });
-  };
-
-  const sideColors: Record<BranchSide, { border: string; bg: string; text: string }> = {
-    father: { border: "#38bdf8", bg: "rgba(56, 189, 248, 0.12)", text: "#38bdf8" },
-    mother: { border: "#f472b6", bg: "rgba(244, 114, 182, 0.12)", text: "#f472b6" },
-    direct: { border: "#34d399", bg: "rgba(52, 211, 153, 0.12)", text: "#34d399" },
-    in_laws: { border: "#c084fc", bg: "rgba(192, 132, 252, 0.12)", text: "#c084fc" },
+    setScale(0.9);
+    setPan({ x: 0, y: 10 });
   };
 
   return (
@@ -103,7 +280,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
         background: "radial-gradient(ellipse at center, var(--bg-secondary) 0%, var(--bg-primary) 100%)",
       }}
     >
-      {/* Zoom controls */}
+      {/* Zoom and Reset Controls */}
       <div
         className="no-print"
         style={{
@@ -124,7 +301,10 @@ export const TreeView: React.FC<TreeViewProps> = ({
       >
         <button
           id="btn-zoom-in"
-          onClick={() => setScale((s) => Math.min(s + 0.15, 2.0))}
+          onClick={() => {
+            setScale((s) => Math.min(s + 0.15, 2.0));
+            setTimeout(updateConnectorLines, 50);
+          }}
           className="btn btn-secondary btn-icon"
           title="Kattalashtirish"
           style={{ width: "36px", height: "36px" }}
@@ -133,7 +313,10 @@ export const TreeView: React.FC<TreeViewProps> = ({
         </button>
         <button
           id="btn-zoom-out"
-          onClick={() => setScale((s) => Math.max(s - 0.15, 0.4))}
+          onClick={() => {
+            setScale((s) => Math.max(s - 0.15, 0.4));
+            setTimeout(updateConnectorLines, 50);
+          }}
           className="btn btn-secondary btn-icon"
           title="Kichiklashtirish"
           style={{ width: "36px", height: "36px" }}
@@ -151,7 +334,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
         </button>
       </div>
 
-      {/* Side of Family Filter Buttons */}
+      {/* Floating Top Controls: Dynamic Kinship & Branch Filter */}
       <div
         className="no-print"
         style={{
@@ -160,95 +343,247 @@ export const TreeView: React.FC<TreeViewProps> = ({
           left: "20px",
           zIndex: 40,
           display: "flex",
-          alignItems: "center",
-          gap: "6px",
-          background: "var(--bg-card)",
-          padding: "6px 12px",
-          borderRadius: "var(--radius-lg)",
-          border: "1px solid var(--border-subtle)",
-          backdropFilter: "blur(12px)",
-          boxShadow: "var(--shadow-md)",
-          flexWrap: "wrap",
+          flexDirection: "column",
+          gap: "10px",
           maxWidth: "calc(100vw - 120px)",
         }}
       >
-        <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-gold)", display: "flex", alignItems: "center", gap: "4px" }}>
-          <Users size={14} /> Shoxobcha:
-        </span>
-        <button
-          onClick={() => setActiveSide("all")}
-          className="btn btn-sm"
+        {/* Row 1: Kinship Mode Toggle & Focus Person Selector */}
+        <div
           style={{
-            background: activeSide === "all" ? "var(--gold-gradient)" : "transparent",
-            color: activeSide === "all" ? "#000" : "var(--text-secondary)",
-            padding: "4px 10px",
-            fontSize: "12px",
-            borderRadius: "6px",
+            display: "flex",
+            alignItems: "center",
+            gap: "10px",
+            background: "var(--bg-card)",
+            padding: "8px 16px",
+            borderRadius: "var(--radius-lg)",
+            border: "1px solid var(--border-primary)",
+            backdropFilter: "blur(16px)",
+            boxShadow: "var(--shadow-gold)",
+            flexWrap: "wrap",
           }}
         >
-          Barcha qarindoshlar ({people.length})
-        </button>
-        <button
-          onClick={() => setActiveSide("father")}
-          className="btn btn-sm"
+          <button
+            onClick={() => setEnableKinship(!enableKinship)}
+            className="btn btn-sm"
+            style={{
+              background: enableKinship ? "var(--gold-gradient)" : "var(--bg-tertiary)",
+              color: enableKinship ? "#0b0f19" : "var(--text-muted)",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              fontWeight: 700,
+            }}
+            title="Qarindoshlik nomlarini dinamik ko'rsatish"
+          >
+            {enableKinship ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}
+            <span>Nisbiy nomlanish: {enableKinship ? "YOQILGAN" : "O'CHIRILGAN"}</span>
+          </button>
+
+          {enableKinship && (
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ fontSize: "12px", color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: "4px" }}>
+                <Target size={14} color="var(--text-gold)" /> Kimga nisbatan:
+              </span>
+              <select
+                id="select-focus-person"
+                className="form-select"
+                style={{
+                  padding: "4px 10px",
+                  fontSize: "12px",
+                  height: "32px",
+                  background: "var(--bg-secondary)",
+                  color: "var(--text-gold)",
+                  fontWeight: 700,
+                  borderColor: "var(--gold-500)",
+                }}
+                value={focusPersonId || ""}
+                onChange={(e) => setFocusPersonId(Number(e.target.value))}
+              >
+                {people.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.first_name} {p.last_name} ({p.birth_year || "?"})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+
+        {/* Row 2: Branch Side Quick Filter */}
+        <div
           style={{
-            background: activeSide === "father" ? "rgba(56, 189, 248, 0.25)" : "transparent",
-            color: activeSide === "father" ? "#38bdf8" : "var(--text-muted)",
-            border: activeSide === "father" ? "1px solid #38bdf8" : "none",
-            padding: "4px 10px",
-            fontSize: "12px",
-            borderRadius: "6px",
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+            background: "var(--bg-card)",
+            padding: "5px 12px",
+            borderRadius: "var(--radius-lg)",
+            border: "1px solid var(--border-subtle)",
+            backdropFilter: "blur(12px)",
+            boxShadow: "var(--shadow-md)",
+            flexWrap: "wrap",
           }}
         >
-          👨‍🦳 Ota tomoni (Amaki, Amma...)
-        </button>
-        <button
-          onClick={() => setActiveSide("mother")}
-          className="btn btn-sm"
-          style={{
-            background: activeSide === "mother" ? "rgba(244, 114, 182, 0.25)" : "transparent",
-            color: activeSide === "mother" ? "#f472b6" : "var(--text-muted)",
-            border: activeSide === "mother" ? "1px solid #f472b6" : "none",
-            padding: "4px 10px",
-            fontSize: "12px",
-            borderRadius: "6px",
-          }}
-        >
-          👩‍🦳 Ona tomoni (Tog&apos;a, Xola...)
-        </button>
-        <button
-          onClick={() => setActiveSide("direct")}
-          className="btn btn-sm"
-          style={{
-            background: activeSide === "direct" ? "rgba(52, 211, 153, 0.25)" : "transparent",
-            color: activeSide === "direct" ? "#34d399" : "var(--text-muted)",
-            border: activeSide === "direct" ? "1px solid #34d399" : "none",
-            padding: "4px 10px",
-            fontSize: "12px",
-            borderRadius: "6px",
-          }}
-        >
-          🌱 O&apos;z avlodlari (Farzand, Nabira...)
-        </button>
+          <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--text-gold)", display: "flex", alignItems: "center", gap: "4px" }}>
+            <Users size={13} /> Tarmoq:
+          </span>
+          <button
+            onClick={() => setActiveSide("all")}
+            className="btn btn-sm"
+            style={{
+              background: activeSide === "all" ? "var(--gold-gradient)" : "transparent",
+              color: activeSide === "all" ? "#000" : "var(--text-secondary)",
+              padding: "3px 8px",
+              fontSize: "11px",
+              borderRadius: "5px",
+            }}
+          >
+            Barchasi ({people.length})
+          </button>
+          <button
+            onClick={() => setActiveSide("father")}
+            className="btn btn-sm"
+            style={{
+              background: activeSide === "father" ? "rgba(56, 189, 248, 0.25)" : "transparent",
+              color: activeSide === "father" ? "#38bdf8" : "var(--text-muted)",
+              border: activeSide === "father" ? "1px solid #38bdf8" : "none",
+              padding: "3px 8px",
+              fontSize: "11px",
+              borderRadius: "5px",
+            }}
+          >
+            Ota tomoni
+          </button>
+          <button
+            onClick={() => setActiveSide("mother")}
+            className="btn btn-sm"
+            style={{
+              background: activeSide === "mother" ? "rgba(244, 114, 182, 0.25)" : "transparent",
+              color: activeSide === "mother" ? "#f472b6" : "var(--text-muted)",
+              border: activeSide === "mother" ? "1px solid #f472b6" : "none",
+              padding: "3px 8px",
+              fontSize: "11px",
+              borderRadius: "5px",
+            }}
+          >
+            Ona tomoni
+          </button>
+          <button
+            onClick={() => setActiveSide("direct")}
+            className="btn btn-sm"
+            style={{
+              background: activeSide === "direct" ? "rgba(52, 211, 153, 0.25)" : "transparent",
+              color: activeSide === "direct" ? "#34d399" : "var(--text-muted)",
+              border: activeSide === "direct" ? "1px solid #34d399" : "none",
+              padding: "3px 8px",
+              fontSize: "11px",
+              borderRadius: "5px",
+            }}
+          >
+            O&apos;z avlodlari
+          </button>
+        </div>
       </div>
 
-      {/* Canvas Canvas Transform Area */}
+      {/* Pannable & Zoomable Canvas Area */}
       <div
+        ref={canvasRef}
         id="tree-diagram-export-target"
         style={{
           transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
           transformOrigin: "top center",
           transition: isDragging ? "none" : "transform 0.15s ease-out",
-          padding: "90px 40px 120px 40px",
+          padding: "100px 60px 180px 60px",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
-          gap: "54px",
-          minWidth: "1300px",
+          gap: "70px",
+          minWidth: "1500px",
+          position: "relative",
         }}
       >
-        {peopleByGen.map((genTier) => {
-          if (genTier.members.length === 0) return null;
+        {/* SVG Connectors Overlay */}
+        <svg
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: "100%",
+            pointerEvents: "none",
+            zIndex: 1,
+          }}
+        >
+          <defs>
+            {/* Arrow marker for parent-child links */}
+            <marker
+              id="arrow-down"
+              viewBox="0 0 10 10"
+              refX="6"
+              refY="5"
+              markerWidth="6"
+              markerHeight="6"
+              orient="auto-start-reverse"
+            >
+              <path d="M 0 1 L 8 5 L 0 9 z" fill="var(--gold-500)" />
+            </marker>
+
+            {/* Marriage Heart / Knot marker */}
+            <linearGradient id="gold-line-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stopColor="#fcd34d" />
+              <stop offset="50%" stopColor="#f59e0b" />
+              <stop offset="100%" stopColor="#b45309" />
+            </linearGradient>
+          </defs>
+
+          {lines.map((line) => {
+            if (line.type === "spouse") {
+              // Horizontal marriage connection line with rings
+              return (
+                <g key={line.id}>
+                  <line
+                    x1={line.fromX}
+                    y1={line.fromY}
+                    x2={line.toX}
+                    y2={line.toY}
+                    stroke="#d4af37"
+                    strokeWidth="3"
+                    strokeDasharray="4 3"
+                  />
+                  <circle
+                    cx={(line.fromX + line.toX) / 2}
+                    cy={(line.fromY + line.toY) / 2}
+                    r="8"
+                    fill="var(--bg-secondary)"
+                    stroke="#d4af37"
+                    strokeWidth="2"
+                  />
+                </g>
+              );
+            } else {
+              // Cubic bezier curve descending from parent to child
+              const midY = (line.fromY + line.toY) / 2;
+              const pathD = `M ${line.fromX} ${line.fromY} C ${line.fromX} ${midY}, ${line.toX} ${midY}, ${line.toX} ${line.toY}`;
+
+              return (
+                <path
+                  key={line.id}
+                  d={pathD}
+                  fill="none"
+                  stroke="url(#gold-line-grad)"
+                  strokeWidth="2.5"
+                  markerEnd="url(#arrow-down)"
+                  opacity="0.8"
+                />
+              );
+            }
+          })}
+        </svg>
+
+        {/* Generations & Couple Units */}
+        {familyUnitsByGen.map((genTier) => {
+          if (genTier.units.length === 0) return null;
 
           return (
             <div
@@ -258,9 +593,11 @@ export const TreeView: React.FC<TreeViewProps> = ({
                 display: "flex",
                 flexDirection: "column",
                 alignItems: "center",
+                position: "relative",
+                zIndex: 2,
               }}
             >
-              {/* Generation Header Pill */}
+              {/* Generation Header Ribbon */}
               <div
                 style={{
                   display: "inline-flex",
@@ -268,9 +605,9 @@ export const TreeView: React.FC<TreeViewProps> = ({
                   gap: "10px",
                   background: "var(--bg-secondary)",
                   border: "1px solid var(--border-primary)",
-                  padding: "6px 20px",
+                  padding: "6px 22px",
                   borderRadius: "9999px",
-                  marginBottom: "20px",
+                  marginBottom: "24px",
                   boxShadow: "var(--shadow-sm)",
                 }}
               >
@@ -286,225 +623,69 @@ export const TreeView: React.FC<TreeViewProps> = ({
                 }}>
                   {genTier.label.title_uz}
                 </span>
-                <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
-                  ({genTier.members.length} qarindosh)
-                </span>
               </div>
 
-              {/* Members Cards Row */}
+              {/* Family Units (Couples & Individuals) */}
               <div
                 style={{
                   display: "flex",
                   flexWrap: "wrap",
                   justifyContent: "center",
-                  gap: "24px",
-                  maxWidth: "1500px",
+                  gap: "40px",
+                  maxWidth: "1800px",
                 }}
               >
-                {genTier.members.map((person) => {
-                  const isOwner = currentUser?.id === person.created_by || currentUser?.role === "admin";
-                  const isMale = person.gender === "male";
-                  const portrait = person.photo_url || (person.photos && person.photos[0]) || null;
-                  const sideStyle = sideColors[person.branch_side] || sideColors.direct;
-
+                {genTier.units.map((unit) => {
                   return (
                     <div
-                      key={person.id}
-                      id={`person-card-${person.id}`}
-                      className={`person-node-card glass-panel`}
-                      onClick={() => onSelectPerson(person)}
+                      key={unit.id}
+                      className="family-unit-cluster"
                       style={{
-                        width: "290px",
-                        padding: "16px",
-                        cursor: "pointer",
-                        position: "relative",
-                        borderTop: `4px solid ${isMale ? "var(--male-color)" : "var(--female-color)"}`,
-                        boxShadow: "var(--shadow-md)",
                         display: "flex",
-                        flexDirection: "column",
-                        gap: "12px",
-                        borderRadius: "var(--radius-md)",
-                        transition: "all 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.transform = "translateY(-4px)";
-                        e.currentTarget.style.borderColor = "var(--border-focus)";
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.transform = "translateY(0)";
-                        e.currentTarget.style.borderColor = "var(--border-subtle)";
+                        alignItems: "center",
+                        gap: "16px",
+                        background: unit.spouse ? "rgba(212, 175, 55, 0.04)" : "transparent",
+                        border: unit.spouse ? "1px dashed rgba(212, 175, 55, 0.25)" : "none",
+                        padding: unit.spouse ? "8px 12px" : "0",
+                        borderRadius: "18px",
                       }}
                     >
-                      {/* Top Header: Portrait + Basic Meta */}
-                      <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
-                        {/* Portrait Thumbnail */}
+                      {/* Primary Person */}
+                      {renderPersonCard(unit.primary)}
+
+                      {/* Marital Badge between husband & wife */}
+                      {unit.spouse && (
                         <div
                           style={{
-                            width: "56px",
-                            height: "56px",
-                            borderRadius: "50%",
-                            overflow: "hidden",
-                            border: `2px solid ${isMale ? "var(--male-color)" : "var(--female-color)"}`,
-                            background: "var(--bg-tertiary)",
-                            flexShrink: 0,
                             display: "flex",
+                            flexDirection: "column",
                             alignItems: "center",
                             justifyContent: "center",
-                            boxShadow: "var(--shadow-sm)",
+                            gap: "2px",
+                            color: "var(--text-gold)",
                           }}
+                          title="Turmush o'rtoqlar (Er-Xotin)"
                         >
-                          {portrait ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
-                              src={portrait}
-                              alt={person.first_name}
-                              style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                            />
-                          ) : (
-                            <UserIcon
-                              size={28}
-                              color={isMale ? "var(--male-color)" : "var(--female-color)"}
-                            />
-                          )}
-                        </div>
-
-                        {/* Name and Kinship Title */}
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          {person.relationship_title && (
-                            <div
-                              style={{
-                                fontSize: "11px",
-                                fontWeight: 700,
-                                color: sideStyle.text,
-                                display: "inline-block",
-                                background: sideStyle.bg,
-                                padding: "1px 6px",
-                                borderRadius: "4px",
-                                marginBottom: "2px",
-                              }}
-                            >
-                              ⭐ {person.relationship_title}
-                            </div>
-                          )}
-
-                          <h3
+                          <div
                             style={{
-                              fontSize: "15px",
-                              fontWeight: 700,
-                              color: "var(--text-primary)",
-                              lineHeight: "1.2",
-                              whiteSpace: "nowrap",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
+                              width: "28px",
+                              height: "28px",
+                              borderRadius: "50%",
+                              background: "rgba(212, 175, 55, 0.15)",
+                              border: "1px solid var(--gold-500)",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
                             }}
                           >
-                            {person.first_name} {person.last_name}
-                          </h3>
-
-                          {person.patronymic && (
-                            <p style={{ fontSize: "11px", color: "var(--text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                              {person.patronymic}
-                            </p>
-                          )}
+                            <Heart size={14} fill="#f59e0b" color="#f59e0b" />
+                          </div>
+                          <span style={{ fontSize: "9px", fontWeight: 700, color: "var(--text-gold)" }}>ER-XOTIN</span>
                         </div>
-                      </div>
+                      )}
 
-                      {/* Dates & Living Status */}
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "12px" }}>
-                        <span style={{ color: "var(--text-gold)", fontWeight: 600 }}>
-                          {person.birth_year ? `${person.birth_year}-y.` : "?"} —{" "}
-                          {person.is_alive ? "hozir" : person.death_year ? `${person.death_year}-y.` : "?"}
-                        </span>
-
-                        <span
-                          style={{
-                            fontSize: "11px",
-                            fontWeight: 600,
-                            color: person.is_alive ? "var(--emerald-500)" : "var(--text-muted)",
-                          }}
-                        >
-                          {person.is_alive ? "• Hayot" : "• Vafot etgan"}
-                        </span>
-                      </div>
-
-                      {/* Details snippet: Phone / Place / Occupation */}
-                      <div style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "11px", color: "var(--text-muted)" }}>
-                        {person.phone && (
-                          <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--emerald-500)" }}>
-                            <Phone size={12} />
-                            <span>{person.phone}</span>
-                          </div>
-                        )}
-                        {person.birth_place && (
-                          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                            <MapPin size={12} />
-                            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {person.birth_place}
-                            </span>
-                          </div>
-                        )}
-                        {person.occupation && (
-                          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                            <Briefcase size={12} />
-                            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {person.occupation}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Creator attribution footer */}
-                      <div
-                        style={{
-                          marginTop: "2px",
-                          paddingTop: "8px",
-                          borderTop: "1px solid var(--border-subtle)",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          fontSize: "11px",
-                        }}
-                      >
-                        <span style={{ color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "4px" }}>
-                          <UserIcon size={11} />
-                          {person.created_by_name || "Oila a'zosi"}
-                        </span>
-
-                        <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                          {isOwner ? (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onEditPerson(person);
-                              }}
-                              className="btn btn-sm btn-secondary"
-                              style={{ padding: "3px 6px", fontSize: "10px", height: "auto" }}
-                              title="Tahrirlash"
-                            >
-                              <Edit3 size={11} />
-                              <span>Tahrirlash</span>
-                            </button>
-                          ) : (
-                            <span style={{ color: "var(--text-muted)" }} title="Himoyalangan">
-                              <Lock size={11} />
-                            </span>
-                          )}
-
-                          {currentUser && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onAddRelated(person.id, "child");
-                              }}
-                              className="btn btn-sm btn-outline"
-                              style={{ padding: "3px 6px", fontSize: "10px", height: "auto" }}
-                              title="Farzand qo'shish"
-                            >
-                              <Plus size={11} />
-                            </button>
-                          )}
-                        </div>
-                      </div>
+                      {/* Spouse Person */}
+                      {unit.spouse && renderPersonCard(unit.spouse)}
                     </div>
                   );
                 })}
@@ -515,4 +696,227 @@ export const TreeView: React.FC<TreeViewProps> = ({
       </div>
     </div>
   );
+
+  function renderPersonCard(person: Person) {
+    const isOwner = currentUser?.id === person.created_by || currentUser?.role === "admin";
+    const isMale = person.gender === "male";
+    const portrait = person.photo_url || (person.photos && person.photos[0]) || null;
+    const isCurrentFocus = focusPersonId === person.id;
+
+    // Calculate dynamic kinship title relative to focus person
+    const kinshipLabel = enableKinship
+      ? getKinshipTitle(person, focusPerson, people)
+      : (person.relationship_title || `${person.generation_level}-bo'g'in`);
+
+    return (
+      <div
+        key={person.id}
+        id={`person-card-${person.id}`}
+        className={`person-node-card glass-panel`}
+        onClick={() => onSelectPerson(person)}
+        style={{
+          width: "260px",
+          padding: "14px",
+          cursor: "pointer",
+          position: "relative",
+          borderTop: `4px solid ${isMale ? "var(--male-color)" : "var(--female-color)"}`,
+          border: isCurrentFocus ? "2px solid var(--gold-500)" : undefined,
+          boxShadow: isCurrentFocus ? "var(--shadow-gold)" : "var(--shadow-md)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "10px",
+          borderRadius: "var(--radius-md)",
+          transition: "all 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
+          background: isCurrentFocus ? "var(--bg-tertiary)" : "var(--bg-card)",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.transform = "translateY(-4px)";
+          e.currentTarget.style.borderColor = "var(--border-focus)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.transform = "translateY(0)";
+          e.currentTarget.style.borderColor = isCurrentFocus ? "var(--gold-500)" : "var(--border-subtle)";
+        }}
+      >
+        {/* Top Header: Portrait + Kinship Badge */}
+        <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+          {/* Portrait Thumbnail */}
+          <div
+            style={{
+              width: "50px",
+              height: "50px",
+              borderRadius: "50%",
+              overflow: "hidden",
+              border: `2px solid ${isMale ? "var(--male-color)" : "var(--female-color)"}`,
+              background: "var(--bg-tertiary)",
+              flexShrink: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            {portrait ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={portrait}
+                alt={person.first_name}
+                style={{ width: "100%", height: "100%", objectFit: "cover" }}
+              />
+            ) : (
+              <UserIcon
+                size={26}
+                color={isMale ? "var(--male-color)" : "var(--female-color)"}
+              />
+            )}
+          </div>
+
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {/* Kinship or Generation Title */}
+            <div
+              style={{
+                fontSize: "11px",
+                fontWeight: 800,
+                color: isCurrentFocus ? "#000" : "var(--text-gold)",
+                display: "inline-block",
+                background: isCurrentFocus ? "var(--gold-gradient)" : "rgba(212, 175, 55, 0.15)",
+                padding: "2px 7px",
+                borderRadius: "4px",
+                marginBottom: "3px",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                maxWidth: "100%",
+              }}
+            >
+              {isCurrentFocus ? "🎯 O'ZINGIZ" : `⭐ ${kinshipLabel}`}
+            </div>
+
+            <h3
+              style={{
+                fontSize: "15px",
+                fontWeight: 700,
+                color: "var(--text-primary)",
+                lineHeight: "1.2",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              {person.first_name} {person.last_name}
+            </h3>
+
+            {person.patronymic && (
+              <p style={{ fontSize: "11px", color: "var(--text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {person.patronymic}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Dates & Living Status */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "11px" }}>
+          <span style={{ color: "var(--text-gold)", fontWeight: 600 }}>
+            {person.birth_year ? `${person.birth_year}-y.` : "?"} —{" "}
+            {person.is_alive ? "hozir" : person.death_year ? `${person.death_year}-y.` : "?"}
+          </span>
+
+          <span
+            style={{
+              fontSize: "10px",
+              fontWeight: 600,
+              color: person.is_alive ? "var(--emerald-500)" : "var(--text-muted)",
+            }}
+          >
+            {person.is_alive ? "• Hayot" : "• Vafot"}
+          </span>
+        </div>
+
+        {/* Location & Contact Snippet */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "2px", fontSize: "11px", color: "var(--text-muted)" }}>
+          {person.phone && (
+            <div style={{ display: "flex", alignItems: "center", gap: "5px", color: "var(--emerald-500)" }}>
+              <Phone size={11} />
+              <span>{person.phone}</span>
+            </div>
+          )}
+          {person.birth_place && (
+            <div style={{ display: "flex", alignItems: "center", gap: "5px" }}>
+              <MapPin size={11} />
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {person.birth_place}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Card Footer: Set As Focus & Edit Controls */}
+        <div
+          style={{
+            marginTop: "2px",
+            paddingTop: "6px",
+            borderTop: "1px solid var(--border-subtle)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            fontSize: "11px",
+          }}
+        >
+          {/* Target button to set relative-to this person */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setFocusPersonId(person.id);
+              setEnableKinship(true);
+            }}
+            className="btn btn-sm"
+            style={{
+              padding: "2px 6px",
+              fontSize: "10px",
+              background: isCurrentFocus ? "rgba(212, 175, 55, 0.2)" : "transparent",
+              color: isCurrentFocus ? "var(--text-gold)" : "var(--text-muted)",
+              border: "none",
+            }}
+            title="Barcha qarindoshlarni ushbu shaxsga nisbatan hisoblash"
+          >
+            <Target size={11} />
+            <span>{isCurrentFocus ? "Tanlangan" : "Menga qiyos"}</span>
+          </button>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            {isOwner ? (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEditPerson(person);
+                }}
+                className="btn btn-sm btn-secondary"
+                style={{ padding: "2px 5px", fontSize: "10px" }}
+                title="Tahrirlash / Qarindoshlik nomini o'zgartirish"
+              >
+                <Edit3 size={11} />
+              </button>
+            ) : (
+              <span style={{ color: "var(--text-muted)" }} title="Himoyalangan">
+                <Lock size={10} />
+              </span>
+            )}
+
+            {currentUser && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAddRelated(person.id, "child");
+                }}
+                className="btn btn-sm btn-outline"
+                style={{ padding: "2px 5px", fontSize: "10px" }}
+                title="Farzand qo'shish"
+              >
+                <Plus size={11} />
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 };
