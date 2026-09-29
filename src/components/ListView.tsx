@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from "react";
 import { Person, User, BranchSide, UZBEK_GENERATION_LABELS } from "@/lib/types";
-import { getDynamicBranchSide, getKinshipTitle } from "@/lib/kinship";
+import { getDynamicBranchSide, getKinshipTitle, getPersonLineage } from "@/lib/kinship";
 import { 
   Search, 
   Filter, 
@@ -43,6 +43,7 @@ export const ListView: React.FC<ListViewProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedSide, setSelectedSide] = useState<"all" | BranchSide>("all");
+  const [objLineageFilter, setObjLineageFilter] = useState<"all" | "shermatov" | "mansurov" | "male" | "female">("all");
   const [onlyMine, setOnlyMine] = useState(false);
 
   // Dynamic branch sides relative to focus person
@@ -83,8 +84,18 @@ export const ListView: React.FC<ListViewProps> = ({
 
       if (query && !match) return false;
 
-      if (selectedSide !== "all" && (dynamicSideMap.get(p.id) || "direct") !== selectedSide) {
-        return false;
+      if (enableKinship) {
+        if (selectedSide !== "all" && (dynamicSideMap.get(p.id) || "direct") !== selectedSide) {
+          return false;
+        }
+      } else {
+        if (objLineageFilter === "shermatov" || objLineageFilter === "mansurov") {
+          if (getPersonLineage(p, people).id !== objLineageFilter) return false;
+        } else if (objLineageFilter === "male" && p.gender !== "male") {
+          return false;
+        } else if (objLineageFilter === "female" && p.gender !== "female") {
+          return false;
+        }
       }
 
       if (onlyMine && currentUser && p.created_by !== currentUser.id) {
@@ -93,7 +104,7 @@ export const ListView: React.FC<ListViewProps> = ({
 
       return true;
     });
-  }, [people, searchQuery, selectedSide, onlyMine, currentUser, dynamicSideMap]);
+  }, [people, searchQuery, selectedSide, onlyMine, currentUser, dynamicSideMap, enableKinship, objLineageFilter]);
 
   const sideLabels: Record<BranchSide, { label: string; color: string; bg: string }> = {
     father: { label: "Ota tomoni", color: "#38bdf8", bg: "rgba(56, 189, 248, 0.12)" },
@@ -144,19 +155,35 @@ export const ListView: React.FC<ListViewProps> = ({
         <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
             <Users size={16} color="var(--text-muted)" />
-            <select
-              id="select-filter-side"
-              className="form-select"
-              style={{ width: "auto", minWidth: "190px" }}
-              value={selectedSide}
-              onChange={(e) => setSelectedSide(e.target.value as "all" | BranchSide)}
-            >
-              <option value="all">Barcha shoxobchalar ({people.length})</option>
-              <option value="father">👨‍🦳 Ota tomoni ({dynamicCounts.father})</option>
-              <option value="mother">👩‍🦳 Ona tomoni ({dynamicCounts.mother})</option>
-              <option value="direct">🌱 O&apos;z oilasi ({dynamicCounts.direct})</option>
-              <option value="in_laws">🤝 Qudachilik ({dynamicCounts.in_laws})</option>
-            </select>
+            {enableKinship ? (
+              <select
+                id="select-filter-side"
+                className="form-select"
+                style={{ width: "auto", minWidth: "190px" }}
+                value={selectedSide}
+                onChange={(e) => setSelectedSide(e.target.value as "all" | BranchSide)}
+              >
+                <option value="all">Barcha shoxobchalar ({people.length})</option>
+                <option value="father">👨‍🦳 Ota tomoni ({dynamicCounts.father})</option>
+                <option value="mother">👩‍🦳 Ona tomoni ({dynamicCounts.mother})</option>
+                <option value="direct">🌱 O&apos;z oilasi ({dynamicCounts.direct})</option>
+                <option value="in_laws">🤝 Qudachilik ({dynamicCounts.in_laws})</option>
+              </select>
+            ) : (
+              <select
+                id="select-filter-lineage"
+                className="form-select"
+                style={{ width: "auto", minWidth: "200px" }}
+                value={objLineageFilter}
+                onChange={(e) => setObjLineageFilter(e.target.value as any)}
+              >
+                <option value="all">Barcha qarindoshlar ({people.length})</option>
+                <option value="shermatov">🏛️ Shermatovlar sulolasi</option>
+                <option value="mansurov">🏛️ Mansurovlar sulolasi</option>
+                <option value="male">👨 Erkaklar</option>
+                <option value="female">👩 Ayollar</option>
+              </select>
+            )}
           </div>
 
           {currentUser && (
@@ -271,18 +298,33 @@ export const ListView: React.FC<ListViewProps> = ({
                   {/* Top Badges */}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                      <span
-                        style={{
-                          fontSize: "11px",
-                          fontWeight: 700,
-                          padding: "2px 8px",
-                          borderRadius: "9999px",
-                          background: sideInfo.bg,
-                          color: sideInfo.color,
-                        }}
-                      >
-                        {sideInfo.label}
-                      </span>
+                      {enableKinship ? (
+                        <span
+                          style={{
+                            fontSize: "11px",
+                            fontWeight: 700,
+                            padding: "2px 8px",
+                            borderRadius: "9999px",
+                            background: sideInfo.bg,
+                            color: sideInfo.color,
+                          }}
+                        >
+                          {sideInfo.label}
+                        </span>
+                      ) : (
+                        <span
+                          style={{
+                            fontSize: "11px",
+                            fontWeight: 700,
+                            padding: "2px 8px",
+                            borderRadius: "9999px",
+                            background: getPersonLineage(person, people).bg,
+                            color: getPersonLineage(person, people).color,
+                          }}
+                        >
+                          🏛️ {getPersonLineage(person, people).name}
+                        </span>
+                      )}
 
                       {person.relationship_title && (
                         <span

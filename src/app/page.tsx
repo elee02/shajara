@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { Person, User, BranchSide } from "@/lib/types";
-import { getDynamicBranchSide } from "@/lib/kinship";
+import { getDynamicBranchSide, getPersonLineage } from "@/lib/kinship";
 import { Navbar } from "@/components/Navbar";
 import { TreeView } from "@/components/TreeView";
 import { ListView } from "@/components/ListView";
@@ -216,6 +216,16 @@ export default function Home() {
     return people.filter((p) => dynamicSideMap.get(p.id) === "in_laws").length;
   }, [people, dynamicSideMap]);
 
+  const menCount = useMemo(() => people.filter((p) => p.gender === "male").length, [people]);
+  const womenCount = useMemo(() => people.filter((p) => p.gender === "female").length, [people]);
+  const shermatovCount = useMemo(
+    () => people.filter((p) => getPersonLineage(p, people).id === "shermatov").length,
+    [people]
+  );
+  const mansurovCount = useMemo(
+    () => people.filter((p) => getPersonLineage(p, people).id === "mansurov").length,
+    [people]
+  );
   const myEntriesCount = currentUser ? people.filter((p) => p.created_by === currentUser.id).length : 0;
 
   return (
@@ -282,26 +292,49 @@ export default function Home() {
             <span>Jami: <strong style={{ color: "var(--text-primary)" }}>{people.length}</strong> qarindosh</span>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--text-secondary)" }}>
-            <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#38bdf8" }} />
-            <span>Ota tomoni: <strong style={{ color: "#38bdf8" }}>{fatherSideCount}</strong></span>
-          </div>
+          {enableKinship ? (
+            /* Relative Mode Stats */
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--text-secondary)" }}>
+                <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#38bdf8" }} />
+                <span>Ota tomoni: <strong style={{ color: "#38bdf8" }}>{fatherSideCount}</strong></span>
+              </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--text-secondary)" }}>
-            <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#f472b6" }} />
-            <span>Ona tomoni: <strong style={{ color: "#f472b6" }}>{motherSideCount}</strong></span>
-          </div>
+              <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--text-secondary)" }}>
+                <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#f472b6" }} />
+                <span>Ona tomoni: <strong style={{ color: "#f472b6" }}>{motherSideCount}</strong></span>
+              </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--text-secondary)" }}>
-            <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#34d399" }} />
-            <span>O&apos;z avlodlari / Jigarlar: <strong style={{ color: "#34d399" }}>{directSideCount}</strong></span>
-          </div>
+              <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--text-secondary)" }}>
+                <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#34d399" }} />
+                <span>O&apos;z oilasi: <strong style={{ color: "#34d399" }}>{directSideCount}</strong></span>
+              </div>
 
-          {inLawsSideCount > 0 && (
-            <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--text-secondary)" }}>
-              <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#c084fc" }} />
-              <span>Qudachilik: <strong style={{ color: "#c084fc" }}>{inLawsSideCount}</strong></span>
-            </div>
+              {inLawsSideCount > 0 && (
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--text-secondary)" }}>
+                  <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#c084fc" }} />
+                  <span>Qudachilik: <strong style={{ color: "#c084fc" }}>{inLawsSideCount}</strong></span>
+                </div>
+              )}
+            </>
+          ) : (
+            /* Objective Universal Mode Stats */
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--text-secondary)" }}>
+                <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#38bdf8" }} />
+                <span>Shermatovlar sulolasi: <strong style={{ color: "#38bdf8" }}>{shermatovCount}</strong></span>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--text-secondary)" }}>
+                <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#f472b6" }} />
+                <span>Mansurovlar sulolasi: <strong style={{ color: "#f472b6" }}>{mansurovCount}</strong></span>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--text-secondary)" }}>
+                <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#34d399" }} />
+                <span>Erkaklar: <strong style={{ color: "#34d399" }}>{menCount}</strong> / Ayollar: <strong style={{ color: "#f472b6" }}>{womenCount}</strong></span>
+              </div>
+            </>
           )}
 
           {currentUser && (
@@ -312,35 +345,57 @@ export default function Home() {
           )}
         </div>
 
-        {/* Focus Person Selector in Top Header */}
-        {focusPerson && (
+        {/* Right side: Focus Person or Objective Status */}
+        {enableKinship ? (
+          focusPerson && (
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ fontSize: "12px", color: "var(--text-gold)", fontWeight: 700, display: "flex", alignItems: "center", gap: "4px" }}>
+                🎯 Qiyosiy nuqta:
+              </span>
+              <select
+                id="global-focus-person-select"
+                value={focusPersonId || ""}
+                onChange={(e) => setFocusPersonId(Number(e.target.value))}
+                className="form-select"
+                style={{
+                  padding: "4px 10px",
+                  fontSize: "12px",
+                  height: "auto",
+                  background: "var(--bg-tertiary)",
+                  border: "1px solid var(--gold-500)",
+                  color: "var(--text-primary)",
+                  borderRadius: "var(--radius-sm)",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                {people.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.first_name} {p.last_name} ({p.birth_year || "?"})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )
+        ) : (
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <span style={{ fontSize: "12px", color: "var(--text-gold)", fontWeight: 700, display: "flex", alignItems: "center", gap: "4px" }}>
-              🎯 Qiyosiy nuqta:
+            <span style={{ fontSize: "12px", color: "var(--text-muted)", fontWeight: 600 }}>
+              🌐 Xolis umumiy shajara
             </span>
-            <select
-              id="global-focus-person-select"
-              value={focusPersonId || ""}
-              onChange={(e) => setFocusPersonId(Number(e.target.value))}
-              className="form-select"
+            <button
+              onClick={() => setEnableKinship(true)}
+              className="btn btn-sm"
               style={{
-                padding: "4px 10px",
-                fontSize: "12px",
-                height: "auto",
-                background: "var(--bg-tertiary)",
+                fontSize: "11px",
+                padding: "3px 10px",
+                background: "rgba(212, 175, 55, 0.15)",
+                color: "var(--text-gold)",
                 border: "1px solid var(--gold-500)",
-                color: "var(--text-primary)",
                 borderRadius: "var(--radius-sm)",
-                fontWeight: 600,
-                cursor: "pointer",
               }}
             >
-              {people.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.first_name} {p.last_name} ({p.birth_year || "?"})
-                </option>
-              ))}
-            </select>
+              🎯 Qiyoslashni yoqish
+            </button>
           </div>
         )}
       </div>

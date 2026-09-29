@@ -360,3 +360,58 @@ export function getKinshipTitle(target: Person, focus: Person | null, allPeople:
 
   return "Qarindoshingiz";
 }
+
+export interface LineageInfo {
+  id: string;
+  name: string;
+  color: string;
+  bg: string;
+}
+
+/**
+ * Derives objective genealogical lineage / clan of a person
+ * without any relative bias to a specific focus individual.
+ */
+export function getPersonLineage(person: Person, allPeople: Person[]): LineageInfo {
+  const peopleMap = new Map<number, Person>();
+  allPeople.forEach((p) => peopleMap.set(p.id, p));
+
+  let curr = person;
+  while (curr.father_id && peopleMap.has(curr.father_id)) {
+    curr = peopleMap.get(curr.father_id)!;
+  }
+
+  const ln = ((curr.last_name || "") + " " + (person.last_name || "")).toLowerCase();
+  if (
+    ln.includes("shermat") ||
+    ln.includes("qodir") ||
+    ln.includes("ernazar") ||
+    ln.includes("nazarboy") ||
+    ln.includes("boybobo") ||
+    ln.includes("rahim")
+  ) {
+    return {
+      id: "shermatov",
+      name: "Shermatovlar",
+      color: "#38bdf8",
+      bg: "rgba(56, 189, 248, 0.12)",
+    };
+  }
+
+  if (ln.includes("mansur") || ln.includes("qosim")) {
+    return {
+      id: "mansurov",
+      name: "Mansurovlar",
+      color: "#f472b6",
+      bg: "rgba(244, 114, 182, 0.12)",
+    };
+  }
+
+  const baseSurname = person.last_name ? person.last_name.replace(/(ov|ova|ev|eva)$/i, "") + "lar" : "Sulola";
+  return {
+    id: "other",
+    name: baseSurname,
+    color: "#34d399",
+    bg: "rgba(52, 211, 153, 0.12)",
+  };
+}

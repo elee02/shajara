@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { Person, User, UZBEK_GENERATION_LABELS, BranchSide } from "@/lib/types";
-import { getKinshipTitle, getDynamicBranchSide } from "@/lib/kinship";
+import { getKinshipTitle, getDynamicBranchSide, getPersonLineage } from "@/lib/kinship";
 import { 
   ZoomIn, 
   ZoomOut, 
@@ -65,6 +65,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [activeSide, setActiveSide] = useState<"all" | BranchSide>("all");
+  const [objectiveFilter, setObjectiveFilter] = useState<"all" | "shermatov" | "mansurov" | "male" | "female">("all");
 
   // Relative-to-me controls
   const [internalEnableKinship, setInternalEnableKinship] = useState<boolean>(true);
@@ -117,12 +118,36 @@ export const TreeView: React.FC<TreeViewProps> = ({
     return map;
   }, [people, focusPerson]);
 
-  // Filter people by dynamic branch side if chosen
+  // Filter people by dynamic branch side (when relative) or objective lineage (when objective)
   const filteredPeople = useMemo(() => {
-    if (activeSide === "all") return people;
-    return people.filter((p) => dynamicSideMap.get(p.id) === activeSide);
-  }, [people, activeSide, dynamicSideMap]);
+    if (enableKinship) {
+      if (activeSide === "all") return people;
+      return people.filter((p) => dynamicSideMap.get(p.id) === activeSide);
+    } else {
+      if (objectiveFilter === "all") return people;
+      if (objectiveFilter === "shermatov" || objectiveFilter === "mansurov") {
+        return people.filter((p) => getPersonLineage(p, people).id === objectiveFilter);
+      }
+      if (objectiveFilter === "male") return people.filter((p) => p.gender === "male");
+      if (objectiveFilter === "female") return people.filter((p) => p.gender === "female");
+      return people;
+    }
+  }, [people, enableKinship, activeSide, dynamicSideMap, objectiveFilter]);
 
+  const lineageCounts = useMemo(() => {
+    let shermatov = 0;
+    let mansurov = 0;
+    let male = 0;
+    let female = 0;
+    people.forEach((p) => {
+      const lin = getPersonLineage(p, people).id;
+      if (lin === "shermatov") shermatov++;
+      else if (lin === "mansurov") mansurov++;
+      if (p.gender === "male") male++;
+      else female++;
+    });
+    return { shermatov, mansurov, male, female };
+  }, [people]);
   // Dynamic branch counts relative to focus person
   const dynamicSideCounts = useMemo(() => {
     let father = 0;
@@ -499,7 +524,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
           )}
         </div>
 
-        {/* Row 2: Branch Filter (Dynamic relative to focus) */}
+        {/* Row 2: Filter Toolbar (Relative vs Objective) */}
         <div
           style={{
             display: "flex",
@@ -514,79 +539,160 @@ export const TreeView: React.FC<TreeViewProps> = ({
             flexWrap: "wrap",
           }}
         >
-          <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--text-gold)", display: "flex", alignItems: "center", gap: "4px" }}>
-            <Users size={13} /> Tarmoq ({focusPerson?.first_name}ga nisbatan):
-          </span>
-          <button
-            onClick={() => setActiveSide("all")}
-            className="btn btn-sm"
-            style={{
-              background: activeSide === "all" ? "var(--gold-gradient)" : "transparent",
-              color: activeSide === "all" ? "#000" : "var(--text-secondary)",
-              padding: "3px 8px",
-              fontSize: "11px",
-              borderRadius: "5px",
-            }}
-          >
-            Barchasi ({people.length})
-          </button>
-          <button
-            onClick={() => setActiveSide("father")}
-            className="btn btn-sm"
-            style={{
-              background: activeSide === "father" ? "rgba(56, 189, 248, 0.25)" : "transparent",
-              color: activeSide === "father" ? "#38bdf8" : "var(--text-muted)",
-              border: activeSide === "father" ? "1px solid #38bdf8" : "none",
-              padding: "3px 8px",
-              fontSize: "11px",
-              borderRadius: "5px",
-            }}
-          >
-            👨‍🦳 Ota tomoni ({dynamicSideCounts.father})
-          </button>
-          <button
-            onClick={() => setActiveSide("mother")}
-            className="btn btn-sm"
-            style={{
-              background: activeSide === "mother" ? "rgba(244, 114, 182, 0.25)" : "transparent",
-              color: activeSide === "mother" ? "#f472b6" : "var(--text-muted)",
-              border: activeSide === "mother" ? "1px solid #f472b6" : "none",
-              padding: "3px 8px",
-              fontSize: "11px",
-              borderRadius: "5px",
-            }}
-          >
-            👩‍🦳 Ona tomoni ({dynamicSideCounts.mother})
-          </button>
-          <button
-            onClick={() => setActiveSide("direct")}
-            className="btn btn-sm"
-            style={{
-              background: activeSide === "direct" ? "rgba(52, 211, 153, 0.25)" : "transparent",
-              color: activeSide === "direct" ? "#34d399" : "var(--text-muted)",
-              border: activeSide === "direct" ? "1px solid #34d399" : "none",
-              padding: "3px 8px",
-              fontSize: "11px",
-              borderRadius: "5px",
-            }}
-          >
-            🌱 O&apos;z oilasi ({dynamicSideCounts.direct})
-          </button>
-          {dynamicSideCounts.in_laws > 0 && (
-            <button
-              onClick={() => setActiveSide("in_laws")}
-              className="btn btn-sm"
-              style={{
-                background: activeSide === "in_laws" ? "rgba(192, 132, 252, 0.25)" : "transparent",
-                color: activeSide === "in_laws" ? "#c084fc" : "var(--text-muted)",
-                border: activeSide === "in_laws" ? "1px solid #c084fc" : "none",
-                padding: "3px 8px",
-                fontSize: "11px",
-                borderRadius: "5px",
-              }}
-            >
-              🤝 Qudachilik ({dynamicSideCounts.in_laws})
-            </button>
+          {enableKinship ? (
+            /* Relative Filter Buttons */
+            <>
+              <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--text-gold)", display: "flex", alignItems: "center", gap: "4px" }}>
+                <Users size={13} /> Tarmoq ({focusPerson?.first_name}ga nisbatan):
+              </span>
+              <button
+                onClick={() => setActiveSide("all")}
+                className="btn btn-sm"
+                style={{
+                  background: activeSide === "all" ? "var(--gold-gradient)" : "transparent",
+                  color: activeSide === "all" ? "#000" : "var(--text-secondary)",
+                  padding: "3px 8px",
+                  fontSize: "11px",
+                  borderRadius: "5px",
+                }}
+              >
+                Barchasi ({people.length})
+              </button>
+              <button
+                onClick={() => setActiveSide("father")}
+                className="btn btn-sm"
+                style={{
+                  background: activeSide === "father" ? "rgba(56, 189, 248, 0.25)" : "transparent",
+                  color: activeSide === "father" ? "#38bdf8" : "var(--text-muted)",
+                  border: activeSide === "father" ? "1px solid #38bdf8" : "none",
+                  padding: "3px 8px",
+                  fontSize: "11px",
+                  borderRadius: "5px",
+                }}
+              >
+                👨‍🦳 Ota tomoni ({dynamicSideCounts.father})
+              </button>
+              <button
+                onClick={() => setActiveSide("mother")}
+                className="btn btn-sm"
+                style={{
+                  background: activeSide === "mother" ? "rgba(244, 114, 182, 0.25)" : "transparent",
+                  color: activeSide === "mother" ? "#f472b6" : "var(--text-muted)",
+                  border: activeSide === "mother" ? "1px solid #f472b6" : "none",
+                  padding: "3px 8px",
+                  fontSize: "11px",
+                  borderRadius: "5px",
+                }}
+              >
+                👩‍🦳 Ona tomoni ({dynamicSideCounts.mother})
+              </button>
+              <button
+                onClick={() => setActiveSide("direct")}
+                className="btn btn-sm"
+                style={{
+                  background: activeSide === "direct" ? "rgba(52, 211, 153, 0.25)" : "transparent",
+                  color: activeSide === "direct" ? "#34d399" : "var(--text-muted)",
+                  border: activeSide === "direct" ? "1px solid #34d399" : "none",
+                  padding: "3px 8px",
+                  fontSize: "11px",
+                  borderRadius: "5px",
+                }}
+              >
+                🌱 O&apos;z oilasi ({dynamicSideCounts.direct})
+              </button>
+              {dynamicSideCounts.in_laws > 0 && (
+                <button
+                  onClick={() => setActiveSide("in_laws")}
+                  className="btn btn-sm"
+                  style={{
+                    background: activeSide === "in_laws" ? "rgba(192, 132, 252, 0.25)" : "transparent",
+                    color: activeSide === "in_laws" ? "#c084fc" : "var(--text-muted)",
+                    border: activeSide === "in_laws" ? "1px solid #c084fc" : "none",
+                    padding: "3px 8px",
+                    fontSize: "11px",
+                    borderRadius: "5px",
+                  }}
+                >
+                  🤝 Qudachilik ({dynamicSideCounts.in_laws})
+                </button>
+              )}
+            </>
+          ) : (
+            /* Objective Filter Buttons */
+            <>
+              <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--text-gold)", display: "flex", alignItems: "center", gap: "4px" }}>
+                <Users size={13} /> Sulola va nasab:
+              </span>
+              <button
+                onClick={() => setObjectiveFilter("all")}
+                className="btn btn-sm"
+                style={{
+                  background: objectiveFilter === "all" ? "var(--gold-gradient)" : "transparent",
+                  color: objectiveFilter === "all" ? "#000" : "var(--text-secondary)",
+                  padding: "3px 8px",
+                  fontSize: "11px",
+                  borderRadius: "5px",
+                }}
+              >
+                Barchasi ({people.length})
+              </button>
+              <button
+                onClick={() => setObjectiveFilter("shermatov")}
+                className="btn btn-sm"
+                style={{
+                  background: objectiveFilter === "shermatov" ? "rgba(56, 189, 248, 0.25)" : "transparent",
+                  color: objectiveFilter === "shermatov" ? "#38bdf8" : "var(--text-muted)",
+                  border: objectiveFilter === "shermatov" ? "1px solid #38bdf8" : "none",
+                  padding: "3px 8px",
+                  fontSize: "11px",
+                  borderRadius: "5px",
+                }}
+              >
+                🏛️ Shermatovlar ({lineageCounts.shermatov})
+              </button>
+              <button
+                onClick={() => setObjectiveFilter("mansurov")}
+                className="btn btn-sm"
+                style={{
+                  background: objectiveFilter === "mansurov" ? "rgba(244, 114, 182, 0.25)" : "transparent",
+                  color: objectiveFilter === "mansurov" ? "#f472b6" : "var(--text-muted)",
+                  border: objectiveFilter === "mansurov" ? "1px solid #f472b6" : "none",
+                  padding: "3px 8px",
+                  fontSize: "11px",
+                  borderRadius: "5px",
+                }}
+              >
+                🏛️ Mansurovlar ({lineageCounts.mansurov})
+              </button>
+              <button
+                onClick={() => setObjectiveFilter("male")}
+                className="btn btn-sm"
+                style={{
+                  background: objectiveFilter === "male" ? "rgba(52, 211, 153, 0.25)" : "transparent",
+                  color: objectiveFilter === "male" ? "#34d399" : "var(--text-muted)",
+                  border: objectiveFilter === "male" ? "1px solid #34d399" : "none",
+                  padding: "3px 8px",
+                  fontSize: "11px",
+                  borderRadius: "5px",
+                }}
+              >
+                👨 Erkaklar ({lineageCounts.male})
+              </button>
+              <button
+                onClick={() => setObjectiveFilter("female")}
+                className="btn btn-sm"
+                style={{
+                  background: objectiveFilter === "female" ? "rgba(244, 114, 182, 0.25)" : "transparent",
+                  color: objectiveFilter === "female" ? "#f472b6" : "var(--text-muted)",
+                  border: objectiveFilter === "female" ? "1px solid #f472b6" : "none",
+                  padding: "3px 8px",
+                  fontSize: "11px",
+                  borderRadius: "5px",
+                }}
+              >
+                👩 Ayollar ({lineageCounts.female})
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -754,7 +860,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
                     }}
                   >
                     <span style={{ fontSize: "11px", fontWeight: 700, color: "#38bdf8", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                      👨‍🦳 Ota tomoni ({focusPerson?.first_name}ga)
+                      {enableKinship ? `👨‍🦳 Ota tomoni (${focusPerson?.first_name}ga)` : "🏛️ Shermatovlar tarmog'i"}
                     </span>
                     <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "28px" }}>
                       {genTier.fatherLane.map((unit) => renderFamilyUnit(unit))}
@@ -774,7 +880,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
                     }}
                   >
                     <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--text-gold)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                      🏛️ Asosiy shajara (O&apos;z oilasi &amp; Ota-onasi)
+                      {enableKinship ? "🏛️ O'z oilasi & Ota-onasi" : "💍 Birlashgan oilalar & Avlodlar"}
                     </span>
                     <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "28px" }}>
                       {genTier.centralLane.map((unit) => renderFamilyUnit(unit))}
@@ -793,7 +899,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
                     }}
                   >
                     <span style={{ fontSize: "11px", fontWeight: 700, color: "#f472b6", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                      👩‍🦳 Ona tomoni ({focusPerson?.first_name}ga)
+                      {enableKinship ? `👩‍🦳 Ona tomoni (${focusPerson?.first_name}ga)` : "🏛️ Mansurovlar tarmog'i"}
                     </span>
                     <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "28px" }}>
                       {genTier.motherLane.map((unit) => renderFamilyUnit(unit))}
@@ -812,7 +918,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
                     }}
                   >
                     <span style={{ fontSize: "11px", fontWeight: 700, color: "#c084fc", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                      🤝 Qudachilik ({focusPerson?.first_name}ga)
+                      {enableKinship ? `🤝 Qudachilik (${focusPerson?.first_name}ga)` : "🤝 Qudachilik / Aloqador oilalar"}
                     </span>
                     <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "28px" }}>
                       {genTier.inLawsLane.map((unit) => renderFamilyUnit(unit))}
@@ -891,6 +997,7 @@ export const TreeView: React.FC<TreeViewProps> = ({
     // Dynamic branch side relative to focus person
     const dynSide = dynamicSideMap.get(person.id) || "direct";
     const sideInfo = sideBadgeStyles[dynSide] || sideBadgeStyles.direct;
+    const lineageInfo = getPersonLineage(person, people);
 
     return (
       <div
@@ -955,21 +1062,37 @@ export const TreeView: React.FC<TreeViewProps> = ({
           </div>
 
           <div style={{ flex: 1, minWidth: 0 }}>
-            {/* Dynamic Branch Side Tag */}
+            {/* Dynamic Branch Side Tag (Relative Mode) OR Lineage Badge (Objective Mode) */}
             <div style={{ display: "flex", alignItems: "center", gap: "4px", marginBottom: "3px" }}>
-              <span
-                style={{
-                  fontSize: "9px",
-                  fontWeight: 800,
-                  textTransform: "uppercase",
-                  padding: "1px 6px",
-                  borderRadius: "4px",
-                  background: sideInfo.bg,
-                  color: sideInfo.color,
-                }}
-              >
-                {sideInfo.label}
-              </span>
+              {enableKinship ? (
+                <span
+                  style={{
+                    fontSize: "9px",
+                    fontWeight: 800,
+                    textTransform: "uppercase",
+                    padding: "1px 6px",
+                    borderRadius: "4px",
+                    background: sideInfo.bg,
+                    color: sideInfo.color,
+                  }}
+                >
+                  {sideInfo.label}
+                </span>
+              ) : (
+                <span
+                  style={{
+                    fontSize: "9px",
+                    fontWeight: 800,
+                    textTransform: "uppercase",
+                    padding: "1px 6px",
+                    borderRadius: "4px",
+                    background: lineageInfo.bg,
+                    color: lineageInfo.color,
+                  }}
+                >
+                  🏛️ {lineageInfo.name}
+                </span>
+              )}
             </div>
 
             {/* Kinship or Generation Title */}

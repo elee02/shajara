@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { Person, User, UZBEK_GENERATION_LABELS } from "@/lib/types";
-import { getDynamicBranchSide, getKinshipTitle } from "@/lib/kinship";
+import { getDynamicBranchSide, getKinshipTitle, getPersonLineage } from "@/lib/kinship";
 import { 
   X, 
   MapPin, 
